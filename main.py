@@ -108,8 +108,8 @@ def export_report_to_pdf(rows, start, end, filename):
 
 
 def main(page: ft.Page):
-    page.fonts={'vazir':'assets/vazir.ttf'}
-    page.theme=ft.Theme(font_family='vazir')
+   # page.fonts={'vazir':'assets/vazir.ttf'}
+    #page.theme=ft.Theme(font_family='vazir')
     page.title = "انباردار حرفه‌ای"
     page.scroll = "adaptive"
     page.rtl = True
