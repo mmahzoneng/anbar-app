@@ -7,35 +7,21 @@ import os
 import shutil
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas as pdf_canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
 DB_NAME = "warehouse.db"
 
-# -------------------- PDF Font --------------------
-PDF_FONT_NAME = "Vazir"
-font_path = os.path.join("assets", "Vazir.ttf")
-try:
-    if os.path.exists(font_path):
-        pdfmetrics.registerFont(TTFont(PDF_FONT_NAME, font_path))
-        PDF_FONT = PDF_FONT_NAME
-    else:
-        PDF_FONT = "Helvetica"
-except Exception as e:
-    print(f"Error loading font: {e}")
-    PDF_FONT = "Helvetica"
-
-
+# ----------------------------------------------
+# توابع دیتابیس
+# ----------------------------------------------
 def get_db():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
-
 def init_db():
     conn = get_db()
     c = conn.cursor()
-    c.execute("""
+    c.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
@@ -45,8 +31,8 @@ def init_db():
             buy_price REAL DEFAULT 0,
             category TEXT DEFAULT 'ساختمانی'
         )
-    """)
-    c.execute("""
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
@@ -57,24 +43,22 @@ def init_db():
             timestamp TEXT NOT NULL,
             jalali_date TEXT NOT NULL
         )
-    """)
+    ''')
     conn.commit()
     conn.close()
-
 
 def log_transaction(product_name, change_amount, new_quantity, unit_price, category):
     now_g = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     now_j = jdatetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_db()
     c = conn.cursor()
-    c.execute("""
+    c.execute('''
         INSERT INTO transactions
         (product_name, change_amount, new_quantity, unit_price, category, timestamp, jalali_date)
         VALUES (?,?,?,?,?,?,?)
-    """, (product_name, change_amount, new_quantity, unit_price, category, now_g, now_j))
+    ''', (product_name, change_amount, new_quantity, unit_price, category, now_g, now_j))
     conn.commit()
     conn.close()
-
 
 def backup_db():
     if not os.path.exists(DB_NAME):
@@ -83,71 +67,61 @@ def backup_db():
     now = jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     shutil.copy2(DB_NAME, f"backups/backup_{now}.db")
 
-
 def export_report_to_pdf(rows, start, end, filename):
     c = pdf_canvas.Canvas(filename, pagesize=A4)
     width, height = A4
-    c.setFont(PDF_FONT, 12)
-    title = f"گزارش تراکنش‌ها از {start} تا {end}"
+    c.setFont("Helvetica", 10)  # فونت پیش‌فرض
+    title = f"Report from {start} to {end}"
     c.drawString(50, height - 50, title)
     y = height - 80
     for r in rows:
-        typ = "ورود" if r["change_amount"] > 0 else "خروج"
-        line = (
-            f"{r['jalali_date']} | {r['product_name']} | {typ}: "
-            f"{abs(r['change_amount'])} | قیمت: {r['unit_price']:,.0f} | "
-            f"موجودی بعد از تراکنش: {r['new_quantity']}"
-        )
+        typ = "IN" if r["change_amount"] > 0 else "OUT"
+        line = f"{r['jalali_date']} | {r['product_name']} | {typ}: {abs(r['change_amount'])} | Price: {r['unit_price']:,.0f} | New Qty: {r['new_quantity']}"
         if y < 50:
             c.showPage()
-            c.setFont(PDF_FONT, 12)
+            c.setFont("Helvetica", 10)
             y = height - 50
         c.drawString(50, y, line)
         y -= 20
     c.save()
 
-
+# ----------------------------------------------
+# تابع اصلی برنامه
+# ----------------------------------------------
 def main(page: ft.Page):
-   # page.fonts={'vazir':'assets/vazir.ttf'}
-    #page.theme=ft.Theme(font_family='vazir')
     page.title = "انباردار حرفه‌ای"
     page.scroll = "adaptive"
     page.rtl = True
     page.theme_mode = ft.ThemeMode.LIGHT
 
+    # مقداردهی اولیه دیتابیس (اجرا فقط یک بار)
     init_db()
 
+    # متغیرهای سراسری صفحه
     total_text = ft.Text(size=18, weight="bold")
     products_list = ft.Column(scroll="adaptive")
     start_date = ft.TextField(label="از تاریخ (مثال 1403-01-01)", width=160)
     end_date = ft.TextField(label="تا تاریخ (مثال 1403-12-29)", width=160)
     report_list = ft.Column(scroll="adaptive")
-
     current_report_rows = []
 
-    # ==================== توابع ====================
+    # ------------------------------------------
+    # توابع کمکی
+    # ------------------------------------------
     def refresh_products():
         conn = get_db()
         c = conn.cursor()
-        c.execute("""
-            SELECT name, unit, quantity, min_quantity, buy_price, category
-            FROM products ORDER BY category, name
-        """)
+        c.execute("SELECT name, unit, quantity, min_quantity, buy_price, category FROM products ORDER BY category, name")
         rows = c.fetchall()
         conn.close()
-
 
         products_list.controls.clear()
         total_value = 0
 
+
         for row in rows:
             total_value += row["quantity"] * row["buy_price"]
-            alert_icon = (
-                ft.Icon(ft.icons.WARNING, color=ft.colors.RED, size=16)
-                if row["quantity"] < row["min_quantity"]
-                else ft.Container()
-            )
-
+            alert_icon = ft.Icon(ft.icons.WARNING, color=ft.colors.RED, size=16) if row["quantity"] < row["min_quantity"] else ft.Container()
             products_list.controls.append(
                 ft.Card(
                     content=ft.Container(
@@ -156,27 +130,14 @@ def main(page: ft.Page):
                                 ft.Column(
                                     [
                                         ft.Text(row["name"], weight="bold", size=16),
-                                        ft.Text(
-                                            f"{row['quantity']} {row['unit']}  |  {row['buy_price']:,.0f} تومان",
-                                            size=12,
-                                        ),
-                                        ft.Text(
-                                            f"دسته: {row['category']}",
-                                            size=10,
-                                            color=ft.colors.GREY_600,
-                                        ),
+                                        ft.Text(f"{row['quantity']} {row['unit']}  |  {row['buy_price']:,.0f} تومان", size=12),
+                                        ft.Text(f"دسته: {row['category']}", size=10, color=ft.colors.GREY_600),
                                     ],
                                     expand=True,
                                 ),
                                 alert_icon,
-                                ft.IconButton(
-                                    ft.icons.EDIT,
-                                    on_click=lambda e, n=row["name"]: edit_product_dialog(n),
-                                ),
-                                ft.IconButton(
-                                    ft.icons.DELETE,
-                                    on_click=lambda e, n=row["name"]: delete_product(n),
-                                ),
+                                ft.IconButton(ft.icons.EDIT, on_click=lambda e, n=row["name"]: edit_product_dialog(n)),
+                                ft.IconButton(ft.icons.DELETE, on_click=lambda e, n=row["name"]: delete_product(n)),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
@@ -205,7 +166,6 @@ def main(page: ft.Page):
         c.execute("SELECT name, unit, buy_price, category FROM products WHERE name = ?", (old_name,))
         row = c.fetchone()
         conn.close()
-
         if not row:
             page.snack_bar = ft.SnackBar(ft.Text("کالا پیدا نشد"))
             page.snack_bar.open = True
@@ -215,11 +175,7 @@ def main(page: ft.Page):
         name_field = ft.TextField(label="نام جدید", value=row["name"])
         unit_field = ft.TextField(label="واحد", value=row["unit"])
         price_field = ft.TextField(label="قیمت جدید", value=str(row["buy_price"]))
-        category_drop = ft.Dropdown(
-            label="دسته",
-            options=[ft.dropdown.Option("ساختمانی"), ft.dropdown.Option("آشپزخانه")],
-            value=row["category"],
-        )
+        category_drop = ft.Dropdown(label="دسته", options=[ft.dropdown.Option("ساختمانی"), ft.dropdown.Option("آشپزخانه")], value=row["category"])
 
         def save(e):
             try:
@@ -233,13 +189,8 @@ def main(page: ft.Page):
             conn2 = get_db()
             c2 = conn2.cursor()
             try:
-                c2.execute("""
-                    UPDATE products
-
-13313 محزون, [5/24/2026 10:32 PM]
-SET name=?, unit=?, buy_price=?, category=?
-                    WHERE name=?
-                """, (name_field.value, unit_field.value, price_val, category_drop.value, old_name))
+                c2.execute("UPDATE products SET name=?, unit=?, buy_price=?, category=? WHERE name=?",
+                           (name_field.value, unit_field.value, price_val, category_drop.value, old_name))
                 conn2.commit()
             except sqlite3.IntegrityError:
                 page.snack_bar = ft.SnackBar(ft.Text("نام جدید تکراری است"))
@@ -263,18 +214,14 @@ SET name=?, unit=?, buy_price=?, category=?
         dialog.open = True
         page.update()
 
+
     def add_product_dialog():
         name = ft.TextField(label="نام کالا")
         unit = ft.TextField(label="واحد (عدد، کیلو، ...)", value="عدد")
         qty = ft.TextField(label="تعداد اولیه", value="0")
         min_qty = ft.TextField(label="حداقل موجودی", value="0")
         price = ft.TextField(label="قیمت خرید", value="0")
-        cat = ft.Dropdown(
-            label="دسته",
-            options=[ft.dropdown.Option("ساختمانی"), ft.dropdown.Option("آشپزخانه")],
-            value="ساختمانی",
-            width=200,
-        )
+        cat = ft.Dropdown(label="دسته", options=[ft.dropdown.Option("ساختمانی"), ft.dropdown.Option("آشپزخانه")], value="ساختمانی", width=200)
 
         def save(e):
             try:
@@ -290,13 +237,11 @@ SET name=?, unit=?, buy_price=?, category=?
             conn2 = get_db()
             c2 = conn2.cursor()
             try:
-                c2.execute("""
-                    INSERT INTO products
-                    (name, unit, quantity, min_quantity, buy_price, category)
-                    VALUES (?,?,?,?,?,?)
-                """, (name.value, unit.value, qty_val, min_qty_val, price_val, cat.value))
+                c2.execute("INSERT INTO products (name, unit, quantity, min_quantity, buy_price, category) VALUES (?,?,?,?,?,?)",
+                           (name.value, unit.value, qty_val, min_qty_val, price_val, cat.value))
                 conn2.commit()
-                log_transaction(name.value, qty_val, qty_val, price_val, cat.value)
+                if qty_val != 0:
+                    log_transaction(name.value, qty_val, qty_val, price_val, cat.value)
             except sqlite3.IntegrityError:
                 page.snack_bar = ft.SnackBar(ft.Text("کالایی با این نام قبلاً ثبت شده است"))
                 page.snack_bar.open = True
@@ -348,7 +293,6 @@ SET name=?, unit=?, buy_price=?, category=?
             c2 = conn2.cursor()
             c2.execute("SELECT quantity, buy_price, category FROM products WHERE name=?", (product_drop.value,))
             row = c2.fetchone()
-
             if not row:
                 page.snack_bar = ft.SnackBar(ft.Text("کالا پیدا نشد"))
                 page.snack_bar.open = True
@@ -372,6 +316,7 @@ SET name=?, unit=?, buy_price=?, category=?
             refresh_products()
             page.update()
 
+
         dialog = ft.AlertDialog(
             title=ft.Text("ورود/خروج"),
             content=ft.Column([product_drop, delta_field]),
@@ -388,12 +333,16 @@ SET name=?, unit=?, buy_price=?, category=?
         nonlocal current_report_rows
         start = start_date.value.strip()
         end = end_date.value.strip()
+        if not start or not end:
+            page.snack_bar = ft.SnackBar(ft.Text("لطفاً هر دو تاریخ را وارد کنید"))
+            page.snack_bar.open = True
+            page.update()
+            return
 
         conn = get_db()
         c = conn.cursor()
         c.execute("""
-            SELECT product_name, change_amount, new_quantity,
-                   unit_price, timestamp, jalali_date
+            SELECT product_name, change_amount, new_quantity, unit_price, timestamp, jalali_date
             FROM transactions
             WHERE jalali_date BETWEEN ? AND ?
             ORDER BY timestamp DESC
@@ -410,9 +359,8 @@ SET name=?, unit=?, buy_price=?, category=?
                 typ = "ورود" if r["change_amount"] > 0 else "خروج"
                 report_list.controls.append(
                     ft.Text(
-                        f"{r['jalali_date']} | {r['product_name']} | {typ}: "
-                        f"{abs(r['change_amount'])} | قیمت: {r['unit_price']:,.0f} | "
-                        f"موجودی بعد از تراکنش: {r['new_quantity']}"
+                        f"{r['jalali_date']} | {r['product_name']} | {typ}: {abs(r['change_amount'])} | "
+                        f"قیمت: {r['unit_price']:,.0f} | موجودی بعد: {r['new_quantity']}"
                     )
                 )
         page.update()
@@ -423,19 +371,25 @@ SET name=?, unit=?, buy_price=?, category=?
             page.snack_bar.open = True
             page.update()
             return
-
-        fname = f"report_{start_date.value.strip()}_{end_date.value.strip()}.pdf"
-        export_report_to_pdf(current_report_rows, start_date.value.strip(), end_date.value.strip(), fname)
+        start = start_date.value.strip()
+        end = end_date.value.strip()
+        if not start or not end:
+            page.snack_bar = ft.SnackBar(ft.Text("تاریخ را وارد کنید"))
+            page.snack_bar.open = True
+            page.update()
+            return
+        fname = f"report_{start}_{end}.pdf"
+        export_report_to_pdf(current_report_rows, start, end, fname)
         page.snack_bar = ft.SnackBar(ft.Text(f"گزارش در فایل {fname} ذخیره شد"))
         page.snack_bar.open = True
         page.update()
 
-    # ==================== ساخت تب‌ها ====================
+    # ------------------------------------------
+    # ساخت تب‌ها
+    # ------------------------------------------
     tab_products = ft.Column([
-        ft.Row([
-            ft.ElevatedButton("➕ کالای جدید", on_click=lambda e: add_product_dialog()),
-            ft.ElevatedButton("💾 پشتیبان", on_click=lambda e: backup_db()),
-        ]),
+        ft.Row([ft.ElevatedButton("➕ کالای جدید", on_click=lambda e: add_product_dialog()),
+                ft.ElevatedButton("💾 پشتیبان", on_click=lambda e: backup_db())]),
         ft.Divider(),
         total_text,
         products_list,
@@ -446,31 +400,27 @@ SET name=?, unit=?, buy_price=?, category=?
     ])
 
     tab_reports = ft.Column([
-        ft.Row([
-            start_date,
-            end_date,
-            ft.ElevatedButton("جستجو", on_click=show_report),
-            ft.ElevatedButton("خروجی PDF", on_click=export_pdf_click),
-        ]),
+        ft.Row([start_date, end_date, ft.ElevatedButton("جستجو", on_click=show_report),
+                ft.ElevatedButton("خروجی PDF", on_click=export_pdf_click)]),
         ft.Divider(),
         report_list,
     ])
 
-
-    
     tabs = ft.Tabs(
-    selected_index=0,
-    tabs=[
-        
-        ft.Tab(text="📋 کالاها", content=tab_products),
-        ft.Tab(text="🔄 ورود/خروج", content=tab_update),
-        ft.Tab(text="📊 گزارشات", content=tab_reports),
-    ],
-    expand=True,
-)
+        selected_index=0,
+        tabs=[
+            ft.Tab(text="📋 کالاها", content=tab_products),
+            ft.Tab(text="🔄 ورود/خروج", content=tab_update),
+            ft.Tab(text="📊 گزارشات", content=tab_reports),
+        ],
+        expand=True,
+    )
 
     page.add(tabs)
     refresh_products()
 
-
-ft.app(target=main)
+# ----------------------------------------------
+# اجرای برنامه
+# ----------------------------------------------
+if __name__ == "__main__":
+    ft.app(target=main)
