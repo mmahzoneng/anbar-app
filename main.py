@@ -91,7 +91,7 @@ def export_report_to_pdf(rows, start, end, filename):
 def main(page: ft.Page):
     page.title = "انباردار حرفه‌ای"
     page.scroll = "adaptive"
-    page.rtl = True
+  #  page.rtl = True
     page.theme_mode = ft.ThemeMode.LIGHT
 
     # مقداردهی اولیه دیتابیس (اجرا فقط یک بار)
