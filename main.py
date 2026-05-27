@@ -85,7 +85,7 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
 
     try:
-        app_dir = page.get_application_directory()
+       # app_dir = page.get_application_directory()
         db_path = os.path.join(app_dir, "warehouse.db")
         init_db(db_path)
 
