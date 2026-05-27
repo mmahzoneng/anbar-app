@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas as pdf_canvas
 # ----------------------------------------------
 # توابع دیتابیس
 # ----------------------------------------------
+db_path="warehouse.db" 
 def get_db(db_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -86,7 +87,7 @@ def main(page: ft.Page):
 
     try:
        # app_dir = page.get_application_directory()
-        db_path = os.path.join(app_dir, "warehouse.db")
+          
         init_db(db_path)
 
         total_text = ft.Text(size=18, weight="bold")
