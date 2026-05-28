@@ -28,7 +28,7 @@ jobs:
 
       - name: Build APK
         run: |
-          flet build apk --verbose --release
+          flet build apk --verbose 
 
       - name: List built files (for debugging)
         run: ls -la build/ build/apk/ || echo "Build folder not found"
