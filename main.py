@@ -13,13 +13,13 @@ from reportlab.pdfgen import canvas as pdf_canvas
 # توابع دیتابیس
 # ----------------------------------------------
 db_path="warehouse.db" 
-def get_db(db_path):
+def get_db():
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
-def init_db(db_path):
-    conn = get_db(db_path)
+def init_db():
+    conn = get_db()
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,10 +41,10 @@ def init_db(db_path):
     conn.commit()
     conn.close()
 
-def log_transaction(db_path, product_name, change_amount, new_quantity, unit_price, category):
+def log_transaction( product_name, change_amount, new_quantity, unit_price, category):
     now_g = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     now_j = jdatetime.datetime.now().strftime("%Y-%m-%d")
-    conn = get_db(db_path)
+    conn = get_db()
     c = conn.cursor()
     c.execute('''INSERT INTO transactions
         (product_name, change_amount, new_quantity, unit_price, category, timestamp, jalali_date)
@@ -53,7 +53,7 @@ def log_transaction(db_path, product_name, change_amount, new_quantity, unit_pri
     conn.commit()
     conn.close()
 
-def backup_db(db_path):
+def backup_db():
     if not os.path.exists(db_path):
         return
     os.makedirs("backups", exist_ok=True)
@@ -88,7 +88,7 @@ def main(page: ft.Page):
     try:
        # app_dir = page.get_application_directory()
           
-        init_db(db_path)
+        init_db()
 
         total_text = ft.Text(size=18, weight="bold")
         products_list = ft.Column(scroll="adaptive")
@@ -98,7 +98,7 @@ def main(page: ft.Page):
         current_report_rows = []
 
         def refresh_products():
-            conn = get_db(db_path)
+            conn = get_db()
             c = conn.cursor()
             c.execute("SELECT name, unit, quantity, min_quantity, buy_price, category FROM products ORDER BY category, name")
             rows = c.fetchall()
@@ -123,7 +123,7 @@ def main(page: ft.Page):
             page.update()
 
         def delete_product(name):
-            conn = get_db(db_path)
+            conn = get_db()
             c = conn.cursor()
             c.execute("DELETE FROM products WHERE name = ?", (name,))
             conn.commit()
@@ -134,7 +134,7 @@ def main(page: ft.Page):
             page.update()
 
         def edit_product_dialog(old_name):
-            conn = get_db(db_path)
+            conn = get_db()
             c = conn.cursor()
             c.execute("SELECT name, unit, buy_price, category FROM products WHERE name = ?", (old_name,))
             row = c.fetchone()
@@ -157,7 +157,7 @@ def main(page: ft.Page):
                     page.snack_bar.open = True
                     page.update()
                     return
-                conn2 = get_db(db_path)
+                conn2 = get_db()
                 c2 = conn2.cursor()
                 try:
                     c2.execute("UPDATE products SET name=?, unit=?, buy_price=?, category=? WHERE name=?",
@@ -201,7 +201,7 @@ def main(page: ft.Page):
                     page.snack_bar.open = True
                     page.update()
                     return
-                conn2 = get_db(db_path)
+                conn2 = get_db()
                 c2 = conn2.cursor()
                 try:
                     c2.execute("INSERT INTO products (name, unit, quantity, min_quantity, buy_price, category) VALUES (?,?,?,?,?,?)",
@@ -228,7 +228,7 @@ def main(page: ft.Page):
             page.update()
 
         def update_quantity_dialog():
-            conn = get_db(db_path)
+            conn = get_db()
             c = conn.cursor()
             c.execute("SELECT name FROM products")
             prods = [row["name"] for row in c.fetchall()]
@@ -249,7 +249,7 @@ def main(page: ft.Page):
                     page.snack_bar.open = True
                     page.update()
                     return
-                conn2 = get_db(db_path)
+                conn2 = get_db()
                 c2 = conn2.cursor()
                 c2.execute("SELECT quantity, buy_price, category FROM products WHERE name=?", (product_drop.value,))
                 row = c2.fetchone()
@@ -294,7 +294,7 @@ def main(page: ft.Page):
                 page.snack_bar.open = True
                 page.update()
                 return
-            conn = get_db(db_path)
+            conn = get_db()
             c = conn.cursor()
             c.execute("""SELECT product_name, change_amount, new_quantity, unit_price, timestamp, jalali_date
                          FROM transactions WHERE jalali_date BETWEEN ? AND ? ORDER BY timestamp DESC""", (start, end))
