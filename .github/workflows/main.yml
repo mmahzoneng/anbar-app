@@ -7,31 +7,28 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04   # پایدارتر از ubuntu-latest برای flet
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install uv (Fast Package Manager)
-        uses: astral-sh/setup-uv@v5
-
       - name: Install dependencies
         run: |
-          uv pip install --system flet
-          uv pip install --system -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install flet
+          pip install -r requirements.txt
 
-      - name: Build APK
+      - name: Build APK (Non-interactive)
         run: |
-          flet build apk --verbose 
+          yes | flet build apk --verbose
 
-      - name: List built files (for debugging)
-        run: ls -la build/ build/apk/ || echo "Build folder not found"
+      - name: Show build result
+        run: ls -R build/ || echo "Build folder not found"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
