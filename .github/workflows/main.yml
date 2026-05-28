@@ -7,35 +7,37 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # پایدارتر از ubuntu-latest برای flet
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Set up Java (JDK 17)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      - name: Install uv (Fast Package Manager)
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install flet
-          pip install -r requirements.txt
+          uv pip install --system flet
+          uv pip install --system -r requirements.txt
 
-      - name: Build APK with Flet
+      - name: Build APK
         run: |
-          yes | flet build apk
+          flet build apk --verbose --release
 
-      - name: Upload APK Artifact
+      - name: List built files (for debugging)
+        run: ls -la build/ build/apk/ || echo "Build folder not found"
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: build/apk
+          name: Anbar-App-APK
+          path: |
+            build/*.apk
+            build/apk/*.apk
+          if-no-files-found: warn
