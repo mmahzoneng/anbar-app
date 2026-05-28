@@ -10,11 +10,13 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas as pdf_canvas
 
 # ----------------------------------------------
-# توابع دیتابیس
+# مسیر امن دیتابیس (بدون استفاده از Flet)
 # ----------------------------------------------
-db_path="warehouse.db" 
+DB_DIR = os.environ.get("HOME") or os.environ.get("USERPROFILE") or os.path.expanduser("~")
+DB_PATH = os.path.join(DB_DIR, "warehouse.db")
+
 def get_db():
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -41,7 +43,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def log_transaction( product_name, change_amount, new_quantity, unit_price, category):
+def log_transaction(product_name, change_amount, new_quantity, unit_price, category):
     now_g = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     now_j = jdatetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_db()
@@ -54,11 +56,11 @@ def log_transaction( product_name, change_amount, new_quantity, unit_price, cate
     conn.close()
 
 def backup_db():
-    if not os.path.exists(db_path):
+    if not os.path.exists(DB_PATH):
         return
     os.makedirs("backups", exist_ok=True)
     now = jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    shutil.copy2(db_path, f"backups/backup_{now}.db")
+    shutil.copy2(DB_PATH, f"backups/backup_{now}.db")
 
 def export_report_to_pdf(rows, start, end, filename):
     c = pdf_canvas.Canvas(filename, pagesize=A4)
@@ -83,11 +85,10 @@ def export_report_to_pdf(rows, start, end, filename):
 def main(page: ft.Page):
     page.title = "انباردار حرفه‌ای"
     page.scroll = "adaptive"
+    # page.rtl = True   # در صورت نیاز می‌توانی بعداً فعال کنی
     page.theme_mode = ft.ThemeMode.LIGHT
 
     try:
-       # app_dir = page.get_application_directory()
-          
         init_db()
 
         total_text = ft.Text(size=18, weight="bold")
@@ -104,11 +105,11 @@ def main(page: ft.Page):
             rows = c.fetchall()
             conn.close()
             products_list.controls.clear()
+
+
             total_value = 0
             for row in rows:
                 total_value += row["quantity"] * row["buy_price"]
-
-
                 alert_icon = ft.Icon(ft.icons.WARNING, color=ft.colors.RED, size=16) if row["quantity"] < row["min_quantity"] else ft.Container()
                 products_list.controls.append(
                     ft.Card(content=ft.Container(content=ft.Row([
@@ -181,10 +182,9 @@ def main(page: ft.Page):
             dialog.open = True
             page.update()
 
+
         def add_product_dialog():
             name = ft.TextField(label="نام کالا")
-
-
             unit = ft.TextField(label="واحد", value="عدد")
             qty = ft.TextField(label="تعداد اولیه", value="0")
             min_qty = ft.TextField(label="حداقل موجودی", value="0")
@@ -208,7 +208,7 @@ def main(page: ft.Page):
                                (name.value, unit.value, qty_val, min_qty_val, price_val, cat.value))
                     conn2.commit()
                     if qty_val != 0:
-                        log_transaction(db_path, name.value, qty_val, qty_val, price_val, cat.value)
+                        log_transaction(name.value, qty_val, qty_val, price_val, cat.value)
                 except sqlite3.IntegrityError:
                     page.snack_bar = ft.SnackBar(ft.Text("کالایی با این نام قبلاً ثبت شده است"))
                     page.snack_bar.open = True
@@ -262,15 +262,15 @@ def main(page: ft.Page):
                 new_qty = row["quantity"] + delta
                 if new_qty < 0:
                     page.snack_bar = ft.SnackBar(ft.Text("موجودی کافی نیست!"))
+
+
                     page.snack_bar.open = True
                     page.update()
-
-
                     conn2.close()
                     return
                 c2.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, product_drop.value))
                 conn2.commit()
-                log_transaction(db_path, product_drop.value, delta, new_qty, row["buy_price"], row["category"])
+                log_transaction(product_drop.value, delta, new_qty, row["buy_price"], row["category"])
                 conn2.close()
                 dialog.open = False
                 refresh_products()
@@ -332,7 +332,7 @@ def main(page: ft.Page):
 
         tab_products = ft.Column([
             ft.Row([ft.ElevatedButton("➕ کالای جدید", on_click=lambda e: add_product_dialog()),
-                    ft.ElevatedButton("💾 پشتیبان", on_click=lambda e: backup_db(db_path))]),
+                    ft.ElevatedButton("💾 پشتیبان", on_click=lambda e: backup_db())]),
             ft.Divider(), total_text, products_list])
         tab_update = ft.Column([ft.ElevatedButton("📦 ورود/خروج کالا", on_click=lambda e: update_quantity_dialog())])
         tab_reports = ft.Column([
@@ -346,12 +346,11 @@ def main(page: ft.Page):
         page.add(tabs)
         refresh_products()
 
+
     except Exception as e:
-        # این بخش خطا رو مستقیم روی صفحه نشون میده
         page.clean()
         page.add(ft.Text(f"Error:\n{e}\n\n{traceback.format_exc()}", color="red", size=12))
         page.update()
-
 
 if __name__ == "__main__":
     ft.app(target=main)
