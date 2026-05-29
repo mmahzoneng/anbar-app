@@ -399,24 +399,47 @@ def main(page: ft.Page):
             report_list
         ], scroll="adaptive")
 
-        tabs = ft.Tabs(
-            selected_index=0,
-            tabs=[
-                ft.Tab(label="📋 کالاها", content=tab_products),
-                ft.Tab(label="🔄 ورود/خروج", content=tab_update),
-                ft.Tab(label="📊 گزارشات", content=tab_reports)
+        content_area = ft.Container(
+    content=tab_products,
+    expand=True
+)
+
+def change_tab(e):
+    if tabs.selected_index == 0:
+        content_area.content = tab_products
+    elif tabs.selected_index == 1:
+        content_area.content = tab_update
+    elif tabs.selected_index == 2:
+        content_area.content = tab_reports
+
+    page.update()
+
+tabs = ft.Tabs(
+    selected_index=0,
+    tabs=[
+        ft.Tab(label="📋 کالاها"),
+        ft.Tab(label="🔄 ورود/خروج"),
+        ft.Tab(label="📊 گزارشات")
+    ],
+    on_change=change_tab
+)
+
+page.add(
+    ft.Column(
+        [
+            tabs,
+            content_area
             ],
             expand=True
         )
+    )
 
-        page.add(tabs)
-        refresh_products()
+    refresh_products()
+    page.update()
 
-
-    except Exception as e:
-        page.clean()
-        page.add(ft.Text(f"خطای برنامه:\n{str(e)}\n\n{traceback.format_exc()}", color="red", size=14))
-        page.update()
-
-if __name__ == "__main__":
+except Exception as e:        
+    page.clean()
+    page.add(ft.Text(f"خطای برنامه:\n{str(e)}\n\n{traceback.format_exc()}", color="red", size=14))
+    page.update()
+if __name__ == "__main__":  
     ft.app(target=main)
