@@ -402,9 +402,9 @@ def main(page: ft.Page):
         tabs = ft.Tabs(
             selected_index=0,
             tabs=[
-                ft.Tab(text="📋 کالاها", content=tab_products),
-                ft.Tab(text="🔄 ورود/خروج", content=tab_update),
-                ft.Tab(text="📊 گزارشات", content=tab_reports)
+                ft.Tab(label="📋 کالاها", content=tab_products),
+                ft.Tab(label="🔄 ورود/خروج", content=tab_update),
+                ft.Tab(label="📊 گزارشات", content=tab_reports)
             ],
             expand=True
         )
