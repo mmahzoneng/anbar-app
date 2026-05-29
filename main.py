@@ -178,6 +178,10 @@ def main(page: ft.Page):
             page.snack_bar.open = True
             page.update()
 
+        def close_dialog(dialog):
+            dialog.open = False
+            page.update()
+
         # -------------------------
         # رفرش لیست کالا
         # -------------------------
@@ -210,15 +214,29 @@ def main(page: ft.Page):
                                                 size=13,
                                             ),
                                             ft.Text(
+                                                f"حداقل موجودی: {row['min_quantity']}",
+                                                size=12,
+                                            ),
+                                            ft.Text(
                                                 f"دسته: {row['category']}",
                                                 size=12,
                                                 color=ft.colors.GREY_700,
                                             ),
                                         ],
                                     ),
-                                    ft.IconButton(
-                                        ft.icons.DELETE,
-                                        on_click=lambda e, n=row["name"]: delete_product(n),
+                                    ft.Row(
+                                        controls=[
+                                            ft.IconButton(
+                                                ft.icons.EDIT,
+                                                icon_color="blue",
+                                                on_click=lambda e, r=row: edit_product_dialog(r),
+                                            ),
+                                            ft.IconButton(
+                                                ft.icons.DELETE,
+                                                icon_color="red",
+                                                on_click=lambda e, n=row["name"]: delete_product(n),
+                                            ),
+                                        ]
                                     ),
                                 ],
                             ),
@@ -229,6 +247,11 @@ def main(page: ft.Page):
             total_text.value = f"💰 ارزش کل انبار: {total_value:,.0f} تومان"
             page.update()
 
+        # -------------------------
+        # حذف کالا
+
+
+# -------------------------
         def delete_product(name):
             conn = get_db()
             c = conn.cursor()
@@ -249,7 +272,12 @@ def main(page: ft.Page):
             price = ft.TextField(label="قیمت خرید", value="0")
             cat = ft.Dropdown(
                 label="دسته",
-                options=[ft.dropdown.Option("ساختمانی"), ft.dropdown.Option("آشپزخانه")],
+                options=[
+                    ft.dropdown.Option("ساختمانی"),
+                    ft.dropdown.Option("آشپزخانه"),
+                    ft.dropdown.Option("ابزارآلات"),
+                    ft.dropdown.Option("سایر"),
+                ],
                 value="ساختمانی",
                 width=200,
             )
@@ -262,7 +290,6 @@ def main(page: ft.Page):
                 except ValueError:
                     show_message("تعداد/قیمت باید عدد باشد")
                     return
-
 
                 if not name.value or not name.value.strip():
                     show_message("نام کالا را وارد کنید")
@@ -298,7 +325,89 @@ def main(page: ft.Page):
                 content=ft.Column([name, unit, qty, min_qty, price, cat], height=350),
                 actions=[
                     ft.TextButton("ذخیره", on_click=save),
-                    ft.TextButton("انصراف", on_click=lambda e: setattr(dialog, "open", False)),
+                    ft.TextButton("انصراف", on_click=lambda e: close_dialog(dialog)),
+                ],
+            )
+
+            page.dialog = dialog
+            dialog.open = True
+            page.update()
+
+        # -------------------------
+        # ویرایش کالا
+        # -------------------------
+        def edit_product_dialog(row):
+            name = ft.TextField(label="نام کالا", value=str(row["name"]))
+            unit = ft.TextField(label="واحد", value=str(row["unit"]))
+            qty = ft.TextField(label="موجودی", value=str(row["quantity"]))
+            min_qty = ft.TextField(label="حداقل موجودی", value=str(row["min_quantity"]))
+            price = ft.TextField(label="قیمت خرید", value=str(row["buy_price"]))
+            cat = ft.Dropdown(
+                label="دسته",
+                options=[
+                    ft.dropdown.Option("ساختمانی"),
+                    ft.dropdown.Option("آشپزخانه"),
+                    ft.dropdown.Option("ابزارآلات"),
+                    ft.dropdown.Option("سایر"),
+                ],
+                value=row["category"],
+                width=200,
+            )
+
+            old_name = row["name"]
+
+
+            def save_edit(e):
+                try:
+                    qty_val = float(qty.value or 0)
+                    min_qty_val = float(min_qty.value or 0)
+                    price_val = float(price.value or 0)
+                except ValueError:
+                    show_message("مقادیر عددی نامعتبر است")
+                    return
+
+                if not name.value or not name.value.strip():
+                    show_message("نام کالا را وارد کنید")
+                    return
+
+                conn2 = get_db()
+                c2 = conn2.cursor()
+
+                try:
+                    c2.execute(
+                        """
+                        UPDATE products
+                        SET name=?, unit=?, quantity=?, min_quantity=?, buy_price=?, category=?
+                        WHERE id=?
+                        """,
+                        (
+                            name.value.strip(),
+                            unit.value.strip(),
+                            qty_val,
+                            min_qty_val,
+                            price_val,
+                            cat.value,
+                            row["id"],
+                        ),
+                    )
+                    conn2.commit()
+                except sqlite3.IntegrityError:
+                    show_message("نام کالا تکراری است")
+                    conn2.close()
+                    return
+
+                conn2.close()
+                dialog.open = False
+                refresh_products()
+                show_message(f"{old_name} ویرایش شد")
+                page.update()
+
+            dialog = ft.AlertDialog(
+                title=ft.Text("ویرایش کالا"),
+                content=ft.Column([name, unit, qty, min_qty, price, cat], height=350),
+                actions=[
+                    ft.TextButton("ذخیره تغییرات", on_click=save_edit),
+                    ft.TextButton("انصراف", on_click=lambda e: close_dialog(dialog)),
                 ],
             )
 
@@ -366,12 +475,13 @@ def main(page: ft.Page):
                 refresh_products()
                 page.update()
 
+
             dialog = ft.AlertDialog(
                 title=ft.Text("ورود/خروج"),
                 content=ft.Column([product_drop, delta_field], tight=True),
                 actions=[
                     ft.TextButton("ثبت", on_click=save),
-                    ft.TextButton("انصراف", on_click=lambda e: setattr(dialog, "open", False)),
+                    ft.TextButton("انصراف", on_click=lambda e: close_dialog(dialog)),
                 ],
             )
 
@@ -379,8 +489,7 @@ def main(page: ft.Page):
             dialog.open = True
             page.update()
 
-
-# -------------------------
+        # -------------------------
         # گزارش
         # -------------------------
         def show_report(e):
@@ -442,7 +551,7 @@ def main(page: ft.Page):
                 show_message("دیتابیس برای بکاپ پیدا نشد")
 
         # -------------------------
-        # تب‌ها (سازگار با 0.21.2)
+        # تب‌ها - بدون ft.Tabs
         # -------------------------
         tab_products = ft.Column(
             [
@@ -488,28 +597,60 @@ def main(page: ft.Page):
 
         content_area = ft.Container(content=tab_products, expand=True)
 
-        def change_tab(e):
-            if tabs.selected_index == 0:
+
+        btn_tab_products = ft.ElevatedButton("📋 کالاها")
+        btn_tab_update = ft.ElevatedButton("🔄 ورود/خروج")
+        btn_tab_reports = ft.ElevatedButton("📊 گزارشات")
+
+        def set_active_tab(index):
+            btn_tab_products.bgcolor = None
+            btn_tab_products.color = None
+            btn_tab_update.bgcolor = None
+            btn_tab_update.color = None
+            btn_tab_reports.bgcolor = None
+            btn_tab_reports.color = None
+
+            if index == 0:
                 content_area.content = tab_products
-            elif tabs.selected_index == 1:
+                btn_tab_products.bgcolor = "blue"
+                btn_tab_products.color = "white"
+            elif index == 1:
                 content_area.content = tab_update
-            elif tabs.selected_index == 2:
+                btn_tab_update.bgcolor = "blue"
+                btn_tab_update.color = "white"
+            elif index == 2:
                 content_area.content = tab_reports
+                btn_tab_reports.bgcolor = "blue"
+                btn_tab_reports.color = "white"
+
             page.update()
 
+        btn_tab_products.on_click = lambda e: set_active_tab(0)
+        btn_tab_update.on_click = lambda e: set_active_tab(1)
+        btn_tab_reports.on_click = lambda e: set_active_tab(2)
 
-        tabs = ft.Tabs(
-            selected_index=0,
-            tabs=[
-                ft.Tab(label="📋 کالاها"),
-                ft.Tab(label="🔄 ورود/خروج"),
-                ft.Tab(label="📊 گزارشات"),
+        tab_bar = ft.Row(
+            [
+                btn_tab_products,
+                btn_tab_update,
+                btn_tab_reports,
             ],
-            on_change=change_tab,
+            wrap=True,
+            spacing=10,
         )
 
-        page.add(ft.Column([tabs, content_area], expand=True))
+        page.add(
+            ft.Column(
+                [
+                    tab_bar,
+                    ft.Divider(),
+                    content_area,
+                ],
+                expand=True,
+            )
+        )
 
+        set_active_tab(0)
         refresh_products()
         page.update()
 
