@@ -6,6 +6,8 @@ import datetime
 import os
 import shutil
 import traceback
+import csv
+import threading
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.pdfbase import pdfmetrics
@@ -85,9 +87,19 @@ def log_transaction(product_name, change_amount, new_quantity, unit_price, categ
     conn.commit()
     conn.close()
 
-def backup_db(downloads_dir=None):
+def get_downloads_dir():
+    downloads = os.getenv("FLET_APP_STORAGE_DOWNLOADS")
+    if downloads:
+        return downloads
+    downloads = os.path.expanduser("~/Downloads")
+    if os.path.exists(downloads):
+        return downloads
+    return os.path.expanduser("~")
+
+def backup_db(downloads_dir=None, silent=False):
     if not os.path.exists(DB_PATH):
-        return None
+        return None, None
+    
     backup_dir = Path(DB_PATH).parent / "backups"
     backup_dir.mkdir(exist_ok=True)
     now = jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -102,8 +114,11 @@ def backup_db(downloads_dir=None):
             if download_dir_path.exists():
                 download_path = download_dir_path / backup_filename
                 shutil.copy2(DB_PATH, download_path)
-        except: pass
+        except:
+            pass
+    
     return str(backup_path), str(download_path) if download_path else None
+
 
 def get_pdf_path(filename):
     app_storage = os.getenv("FLET_APP_STORAGE_DATA") or str(Path.home() / "warehouse_app")
@@ -111,8 +126,6 @@ def get_pdf_path(filename):
     pdf_dir.mkdir(parents=True, exist_ok=True)
     return str(pdf_dir / filename)
 
-
-# ---------- فونت فارسی ----------
 def setup_font():
     assets_dir = os.getenv("FLET_APP_ASSETS", str(Path(__file__).parent / "assets"))
     font_path = Path(assets_dir) / "B Nazanin.ttf"
@@ -165,32 +178,33 @@ def main(page: ft.Page):
 
         start_date = ft.TextField(label="از تاریخ (اختیاری)", width=170)
         end_date = ft.TextField(label="تا تاریخ (اختیاری)", width=170)
-        search_text = ft.TextField(label="جستجوی کالا یا فروشنده", width=200, hint_text="نام کالا یا فروشنده...")
+        search_text = ft.TextField(label="جستجوی کالا یا فروشنده", width=200,
+                                   hint_text="نام کالا یا فروشنده...")
 
         report_list = ft.Column(scroll="adaptive", spacing=8)
         current_report_rows = []
 
-        # ---------- پیغام‌ها ----------
+        # ---------- توابع کمکی ----------
         def show_message(msg):
             page.snack_bar = ft.SnackBar(ft.Text(msg))
             page.snack_bar.open = True
             page.update()
-
-        def close_dialog():
-            if page.dialog:
-                page.dialog.open = False
-                page.update()
 
         def show_error(title, message):
             page.snack_bar = ft.SnackBar(ft.Text(f"{title}: {message}", color="red"))
             page.snack_bar.open = True
             page.update()
 
+        def close_bottom_sheet():
+            if page.bottom_sheet:
+                page.close_bottom_sheet()
+
         # ---------- موجودی فعلی ----------
         def get_current_quantity(product_name):
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT COALESCE(SUM(change_amount), 0) as qty FROM transactions WHERE product_name = ?", (product_name,))
+            c.execute("SELECT COALESCE(SUM(change_amount), 0) as qty FROM transactions WHERE product_name = ?",
+                      (product_name,))
             qty = c.fetchone()["qty"]
             conn.close()
             return qty
@@ -210,13 +224,13 @@ def main(page: ft.Page):
                 for row in rows:
                     quantity = get_current_quantity(row["name"])
                     total_value += quantity * row["buy_price"]
+
+
                     supplier = f" | فروشنده: {row['supplier_name']}" if row["supplier_name"] else ""
                     
                     products_list.controls.append(
                         ft.Card(
                             content=ft.Container(
-
-
                                 padding=12,
                                 content=ft.Row([
                                     ft.Column([
@@ -226,8 +240,10 @@ def main(page: ft.Page):
                                         ft.Text(f"دسته: {row['category']}", size=12, color=ft.colors.GREY_700),
                                     ], expand=True),
                                     ft.Row([
-                                        ft.IconButton(ft.icons.EDIT, icon_color="blue", on_click=lambda e, r=row: edit_product_dialog(r)),
-                                        ft.IconButton(ft.icons.DELETE, icon_color="red", on_click=lambda e, n=row["name"]: delete_product(n)),
+                                        ft.IconButton(ft.icons.EDIT, icon_color="blue",
+                                                      on_click=lambda e, r=row: edit_product_dialog(r)),
+                                        ft.IconButton(ft.icons.DELETE, icon_color="red",
+                                                      on_click=lambda e, n=row["name"]: delete_product(n)),
                                     ])
                                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
                             )
@@ -250,7 +266,31 @@ def main(page: ft.Page):
             except Exception as ex:
                 show_error("خطا در حذف", str(ex))
 
-        # ---------- افزودن کالا ----------
+        # ---------- پشتیبان‌گیری خودکار ----------
+        def auto_backup():
+            today = jdatetime.datetime.now().strftime("%Y-%m-%d")
+            last_backup_file = Path(DB_PATH).parent / "backups" / "last_backup_date.txt"
+            
+            should_backup = True
+            if last_backup_file.exists():
+                try:
+                    with open(last_backup_file, "r") as f:
+                        last_date = f.read().strip()
+                        if last_date == today:
+                            should_backup = False
+                except:
+                    pass
+            
+            if should_backup:
+                downloads = get_downloads_dir()
+                backup_db(downloads, silent=True)
+                last_backup_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(last_backup_file, "w") as f:
+                    f.write(today)
+
+        threading.Thread(target=auto_backup, daemon=True).start()
+
+        # ---------- افزودن کالا (BottomSheet) ----------
         def add_product_dialog():
             name = ft.TextField(label="نام کالا")
             unit = ft.TextField(label="واحد", value="عدد")
@@ -263,6 +303,8 @@ def main(page: ft.Page):
             def save(e):
                 try:
                     min_qty_val = float(min_qty.value or 0)
+
+
                     price_val = float(price.value or 0)
                 except ValueError:
                     show_message("مقادیر باید عدد باشند")
@@ -281,21 +323,20 @@ def main(page: ft.Page):
                     conn2.close()
                     return
                 conn2.close()
-                close_dialog()
+                close_bottom_sheet()
                 refresh_products()
                 page.update()
 
-            dialog = ft.AlertDialog(
-                title=ft.Text("کالای جدید"),
-                content=ft.Column([name, unit, min_qty, price, cat, supplier], height=380),
-                actions=[ft.TextButton("ذخیره", on_click=save), ft.TextButton("انصراف", on_click=lambda e: close_dialog())]
+            sheet = ft.BottomSheet(
+                content=ft.Container(
+                    padding=20,
+                    content=ft.Column([name, unit, min_qty, price, cat, supplier,
+                                      ft.ElevatedButton("ذخیره", on_click=save)], tight=True, spacing=10)
+                )
             )
-            page.dialog = dialog
-            dialog.open = True
-            page.update()
+            page.show_bottom_sheet(sheet)
 
-
-# ---------- ویرایش کالا ----------
+        # ---------- ویرایش کالا (BottomSheet) ----------
         def edit_product_dialog(row):
             name = ft.TextField(label="نام کالا", value=str(row["name"]))
             unit = ft.TextField(label="واحد", value=str(row["unit"]))
@@ -326,21 +367,21 @@ def main(page: ft.Page):
                     conn2.close()
                     return
                 conn2.close()
-                close_dialog()
+                close_bottom_sheet()
                 refresh_products()
                 show_message(f"{row['name']} ویرایش شد")
                 page.update()
 
-            dialog = ft.AlertDialog(
-                title=ft.Text("ویرایش کالا"),
-                content=ft.Column([name, unit, min_qty, price, cat, supplier], height=380),
-                actions=[ft.TextButton("ذخیره تغییرات", on_click=save_edit), ft.TextButton("انصراف", on_click=lambda e: close_dialog())]
+            sheet = ft.BottomSheet(
+                content=ft.Container(
+                    padding=20,
+                    content=ft.Column([name, unit, min_qty, price, cat, supplier,
+                                      ft.ElevatedButton("ذخیره تغییرات", on_click=save_edit)], tight=True, spacing=10)
+                )
             )
-            page.dialog = dialog
-            dialog.open = True
-            page.update()
+            page.show_bottom_sheet(sheet)
 
-        # ---------- ورود/خروج ----------
+        # ---------- ورود/خروج (BottomSheet) ----------
         def update_quantity_dialog():
             try:
                 conn = get_db()
@@ -348,6 +389,7 @@ def main(page: ft.Page):
                 c.execute("SELECT name FROM products ORDER BY name")
                 prods = [row["name"] for row in c.fetchall()]
                 conn.close()
+
 
                 if not prods:
                     show_message("ابتدا کالایی اضافه کنید")
@@ -371,8 +413,6 @@ def main(page: ft.Page):
                     conn2 = get_db()
                     c2 = conn2.cursor()
                     c2.execute("SELECT buy_price, category FROM products WHERE name=?", (product_drop.value,))
-
-
                     row = c2.fetchone()
                     if not row:
                         show_message("کالا پیدا نشد")
@@ -390,18 +430,18 @@ def main(page: ft.Page):
                     log_transaction(product_drop.value, delta, new_qty, row["buy_price"], row["category"],
                                     desc_field.value.strip(), date_field.value.strip())
                     conn2.close()
-                    close_dialog()
+                    close_bottom_sheet()
                     refresh_products()
                     show_message("✅ تراکنش با موفقیت ثبت شد")
 
-                dialog = ft.AlertDialog(
-                    title=ft.Text("ورود/خروج کالا"),
-                    content=ft.Column([product_drop, delta_field, desc_field, date_field], spacing=10, height=280, scroll="auto"),
-                    actions=[ft.TextButton("ثبت", on_click=save), ft.TextButton("انصراف", on_click=lambda e: close_dialog())]
+                sheet = ft.BottomSheet(
+                    content=ft.Container(
+                        padding=20,
+                        content=ft.Column([product_drop, delta_field, desc_field, date_field,
+                                          ft.ElevatedButton("ثبت", on_click=save)], tight=True, spacing=10)
+                    )
                 )
-                page.dialog = dialog
-                dialog.open = True
-                page.update()
+                page.show_bottom_sheet(sheet)
             except Exception as ex:
                 show_error("خطا در فرم ورود/خروج", str(ex))
 
@@ -437,6 +477,8 @@ def main(page: ft.Page):
                 report_list.controls.clear()
                 if not rows:
                     report_list.controls.append(ft.Text("هیچ تراکنشی یافت نشد", size=16))
+
+
                 else:
                     for r in rows:
                         typ = "ورود" if r["change_amount"] > 0 else "خروج"
@@ -450,30 +492,76 @@ def main(page: ft.Page):
             except Exception as ex:
                 show_error("خطا در نمایش گزارش", str(ex))
 
+        # ---------- بازیابی از پشتیبان ----------
+        def restore_backup(e):
+            def on_file_selected(result: ft.FilePickerResultEvent):
+                if result.files and len(result.files) > 0:
+                    file_path = result.files[0].path
+                    try:
+                        shutil.copy2(file_path, DB_PATH)
+                        show_message("✅ بازیابی با موفقیت انجام شد!\nلطفاً برنامه را ببندید و دوباره باز کنید.")
+                    except Exception as ex:
+                        show_error("خطا در بازیابی", str(ex))
+            
+            file_picker = ft.FilePicker(on_result=on_file_selected)
+            page.overlay.append(file_picker)
+            page.update()
+            file_picker.pick_files(allowed_extensions=["db"])
+
+        # ---------- خروجی اکسل ----------
+        def export_excel_click(e):
+            nonlocal current_report_rows
+            if not current_report_rows:
+                show_message("ابتدا گزارش را جستجو کنید")
+                return
+            
+            downloads = get_downloads_dir()
+            fname = f"report_{jdatetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+            file_path = Path(downloads) / fname
+            
+            try:
+                with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["تاریخ", "کالا", "نوع", "تعداد", "قیمت واحد", "موجودی", "فروشنده", "توضیحات"])
+                    for r in current_report_rows:
+                        typ = "ورود" if r["change_amount"] > 0 else "خروج"
+                        writer.writerow([
+                            r["jalali_date"],
+                            r["product_name"],
+                            typ,
+                            abs(r["change_amount"]),
+                            r["unit_price"],
+                            r["new_quantity"],
+                            r["seller_name"] if "seller_name" in r.keys() else "",
+                            r["description"] if "description" in r.keys() else ""
+                        ])
+                show_message(f"فایل اکسل ذخیره شد:\n{file_path}")
+            except Exception as ex:
+                show_error("خطا در ساخت اکسل", str(ex))
+
         def export_pdf_click(e):
             nonlocal current_report_rows
             if not current_report_rows:
                 show_message("ابتدا گزارش را جستجو کنید")
                 return
             start = start_date.value.strip()
-
-
             end = end_date.value.strip()
             fname = f"report_{start if start else 'all'}_{end if end else 'all'}.pdf"
             try:
                 pdf_path = export_report_to_pdf(current_report_rows, start or "نامشخص", end or "نامشخص", fname)
-                show_message(f"گزارش ذخیره شد:\n{pdf_path}")
+                show_message(f"گزارش PDF ذخیره شد:\n{pdf_path}")
             except Exception as ex:
                 show_error("خطا در ساخت PDF", str(ex))
 
         def backup_click(e):
-            downloads_dir = None
-            try: downloads_dir = page.get_downloads_directory()
-            except: pass
-            bp_main, bp_download = backup_db(downloads_dir)
+            downloads = get_downloads_dir()
+
+
+            bp_main, bp_download = backup_db(downloads)
             if bp_main:
                 msg = f"بکاپ اصلی:\n{bp_main}"
-                if bp_download: msg += f"\n\nدانلود:\n{bp_download}"
+                if bp_download:
+                    msg += f"\n\nدانلود:\n{bp_download}"
                 show_message(msg)
             else:
                 show_message("خطا در تهیه پشتیبان")
@@ -481,7 +569,8 @@ def main(page: ft.Page):
         # ---------- تب‌ها ----------
         tab_products = ft.Column([
             ft.Row([ft.ElevatedButton("➕ کالای جدید", on_click=lambda e: add_product_dialog()),
-                    ft.ElevatedButton("💾 پشتیبان‌گیری", on_click=lambda e: backup_click(e))], wrap=True),
+                    ft.ElevatedButton("💾 پشتیبان‌گیری", on_click=lambda e: backup_click(e)),
+                    ft.ElevatedButton("🔄 بازیابی", on_click=restore_backup)], wrap=True),
             ft.Divider(), total_text, products_list,
         ], scroll="adaptive", expand=True)
 
@@ -493,7 +582,8 @@ def main(page: ft.Page):
             ft.Row([start_date, end_date], wrap=True),
             ft.Row([search_text], wrap=True),
             ft.Row([ft.ElevatedButton("جستجو", on_click=show_report),
-                    ft.ElevatedButton("خروجی PDF", on_click=export_pdf_click)], wrap=True),
+                    ft.ElevatedButton("PDF", on_click=export_pdf_click),
+                    ft.ElevatedButton("Excel", on_click=export_excel_click)], wrap=True),
             ft.Divider(), report_list,
         ], scroll="adaptive", expand=True)
 
@@ -535,4 +625,4 @@ def main(page: ft.Page):
         page.update()
 
 if __name__ == "__main__":
-    ft.app(target=main) 
+    ft.app(target=main)
