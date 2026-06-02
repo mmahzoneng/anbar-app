@@ -53,21 +53,24 @@ class DB:
             )""")
 
     def _migrate(self):
-        cols = [
+        cols_txns = [
             "category TEXT DEFAULT ''",
-            "invoice_no TEXT DEFAULT ''",
-            "receipt_no TEXT DEFAULT ''",
             "price REAL DEFAULT 0",
             "supplier TEXT DEFAULT ''",
+            "invoice_no TEXT DEFAULT ''",
+            "receipt_no TEXT DEFAULT ''",
+        ]
+        cols_products = [
+            "note TEXT DEFAULT ''",
+            "created_at TEXT DEFAULT ''",
         ]
         with self._conn() as c:
-            for col in cols:
+            for col in cols_txns:
                 try:
                     c.execute("ALTER TABLE txns ADD COLUMN " + col)
                 except Exception:
                     pass
-            # products migration
-            for col in ["note TEXT DEFAULT ''", "created_at TEXT DEFAULT ''"]:
+            for col in cols_products:
                 try:
                     c.execute("ALTER TABLE products ADD COLUMN " + col)
                 except Exception:
@@ -114,17 +117,6 @@ class DB:
             r = c.execute("SELECT COALESCE(SUM(delta),0) FROM txns WHERE product_name=?", (name,)).fetchone()
             return r[0]
 
-    def total_value(self):
-        with self._conn() as c:
-            rows = c.execute("SELECT product_name, SUM(delta) as qty FROM txns GROUP BY product_name").fetchall()
-            total = 0
-            for r in rows:
-                if r["qty"] and r["qty"] > 0:
-                    last = c.execute("SELECT price FROM txns WHERE product_name=? AND delta>0 ORDER BY ts DESC LIMIT 1", (r["product_name"],)).fetchone()
-                    if last:
-                        total += r["qty"] * last["price"]
-            return total
-
     def add_txn(self, name, category, delta, price, supplier, note, jdate, invoice_no, receipt_no):
         with self._conn() as c:
             current = c.execute("SELECT COALESCE(SUM(delta),0) FROM txns WHERE product_name=?", (name,)).fetchone()[0]
@@ -139,7 +131,11 @@ class DB:
             )
         return True
 
-    def update_txn(self, txn_id, delta_sign, qty, price, supplier, note, jdate, invoice_no, receipt_no):
+    def get_txn(self, txn_id):
+        with self._conn() as c:
+            return c.execute("SELECT * FROM txns WHERE id=?", (txn_id,)).fetchone()
+
+    def update_txn(self, txn_id, is_in, qty, price, supplier, note, jdate, invoice_no, receipt_no):
         with self._conn() as c:
             row = c.execute("SELECT * FROM txns WHERE id=?", (txn_id,)).fetchone()
             if not row:
@@ -147,7 +143,7 @@ class DB:
             old_delta = row["delta"]
             name = row["product_name"]
             current = c.execute("SELECT COALESCE(SUM(delta),0) FROM txns WHERE product_name=?", (name,)).fetchone()[0]
-            new_delta = qty if delta_sign > 0 else -qty
+            new_delta = qty if is_in else -qty
             new_balance = current - old_delta + new_delta
             if new_balance < 0:
                 return False
@@ -161,28 +157,24 @@ class DB:
         with self._conn() as c:
             c.execute("DELETE FROM txns WHERE id=?", (txn_id,))
 
-    def get_txn(self, txn_id):
-        with self._conn() as c:
-            return c.execute("SELECT * FROM txns WHERE id=?", (txn_id,)).fetchone()
-
-    def search_txns(self, start="", end="", product="", supplier="", txn_type="همه", category="همه", invoice="", receipt=""):
+    def search_txns(self, start="", end="", keyword="", supplier_kw="", txn_type="همه", category="همه", invoice_kw="", receipt_kw=""):
         conds = []
         params = []
         if start and end:
             conds.append("jdate BETWEEN ? AND ?")
             params += [start, end]
-        if product:
+        if keyword:
             conds.append("product_name LIKE ?")
-            params.append("%" + product + "%")
-        if supplier:
+            params.append("%" + keyword + "%")
+        if supplier_kw:
             conds.append("supplier LIKE ?")
-            params.append("%" + supplier + "%")
-        if invoice:
+            params.append("%" + supplier_kw + "%")
+        if invoice_kw:
             conds.append("invoice_no LIKE ?")
-            params.append("%" + invoice + "%")
-        if receipt:
+            params.append("%" + invoice_kw + "%")
+        if receipt_kw:
             conds.append("receipt_no LIKE ?")
-            params.append("%" + receipt + "%")
+            params.append("%" + receipt_kw + "%")
         if txn_type == "ورود":
             conds.append("delta > 0")
         elif txn_type == "خروج":
@@ -236,6 +228,17 @@ class DB:
                 result.append(r)
         return result
 
+    def total_value(self):
+        total = 0
+        with self._conn() as c:
+            rows = c.execute("SELECT product_name, SUM(delta) as qty FROM txns GROUP BY product_name").fetchall()
+            for r in rows:
+                if r["qty"] and r["qty"] > 0:
+                    last = c.execute("SELECT price FROM txns WHERE product_name=? AND delta>0 ORDER BY ts DESC LIMIT 1", (r["product_name"],)).fetchone()
+                    if last:
+                        total += r["qty"] * last["price"]
+        return total
+
     def export_csv(self, rows, path):
         with open(str(path), "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
@@ -287,13 +290,13 @@ class DB:
         shutil.copy2(path, self.path)
 
 
-# ═══════════════════════════════════════════
 BG      = "#F4F6F9"
 C_WHITE = "#FFFFFF"
 C_DARK  = "#1C2B3A"
 C_GRAY  = "#7A8999"
 C_LIGHT = "#E8ECF0"
 C_BLUE  = "#2563EB"
+C_BLUE2 = "#1D4ED8"
 C_GREEN = "#16A34A"
 C_RED   = "#DC2626"
 C_ORANGE= "#EA580C"
@@ -324,12 +327,12 @@ def main(page: ft.Page):
         body.controls = controls
         body.update()
 
-    def header(title, back=None):
-        ctrls = []
-        if back:
-            ctrls.append(ft.IconButton(ft.Icons.ARROW_BACK_IOS, icon_color=C_BLUE, icon_size=20, on_click=lambda e: back()))
-        ctrls.append(ft.Text(title, size=20, weight=ft.FontWeight.BOLD, color=C_DARK, expand=True))
-        return ft.Container(bgcolor=C_WHITE, padding=12, content=ft.Row(controls=ctrls, spacing=4))
+    def page_header(title, back_fn=None):
+        controls = []
+        if back_fn:
+            controls.append(ft.IconButton(ft.Icons.ARROW_BACK_IOS, icon_color=C_BLUE, icon_size=20, on_click=lambda e: back_fn()))
+        controls.append(ft.Text(title, size=20, weight=ft.FontWeight.BOLD, color=C_DARK, expand=True))
+        return ft.Container(bgcolor=C_WHITE, padding=12, content=ft.Row(controls=controls, spacing=4))
 
     # ══════════════════════════════════════════
     #  داشبورد
@@ -351,7 +354,7 @@ def main(page: ft.Page):
                                 ft.Text(jdatetime.date.today().strftime("%Y/%m/%d"), size=13, color="#BFDBFE"),
                             ]),
                             ft.Container(
-                                border_radius=12, bgcolor="#1D4ED8", padding=12,
+                                border_radius=12, bgcolor=C_BLUE2, padding=12,
                                 content=ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
                                     ft.Text("ارزش کل انبار", size=11, color="white"),
                                     ft.Text("{:,.0f} ت".format(total_val), size=15, weight=ft.FontWeight.BOLD, color="white"),
@@ -360,13 +363,13 @@ def main(page: ft.Page):
                         ],
                     ),
                     ft.Row(spacing=10, controls=[
-                        ft.Container(expand=True, border_radius=10, bgcolor="#1D4ED8", padding=12,
+                        ft.Container(expand=True, border_radius=10, bgcolor=C_BLUE2, padding=12,
                             content=ft.Column(spacing=4, controls=[
                                 ft.Icon(ft.Icons.INVENTORY_2, color="white", size=20),
                                 ft.Text(str(len(rows)), size=20, weight=ft.FontWeight.BOLD, color="white"),
                                 ft.Text("قلم کالا", size=11, color="#BFDBFE"),
                             ])),
-                        ft.Container(expand=True, border_radius=10, bgcolor="#1D4ED8", padding=12,
+                        ft.Container(expand=True, border_radius=10, bgcolor=C_BLUE2, padding=12,
                             content=ft.Column(spacing=4, controls=[
                                 ft.Icon(ft.Icons.WARNING_AMBER, color="#FCD34D", size=20),
                                 ft.Text(str(low_count), size=20, weight=ft.FontWeight.BOLD, color="white"),
@@ -392,7 +395,8 @@ def main(page: ft.Page):
             )))
         else:
             if low_count > 0:
-                controls.append(ft.Container(margin=10, border_radius=10, bgcolor="#FEF2F2", padding=10,
+                controls.append(ft.Container(
+                    margin=10, border_radius=10, bgcolor="#FEF2F2", padding=10,
                     content=ft.Row(spacing=8, controls=[
                         ft.Icon(ft.Icons.WARNING_AMBER, color=C_RED, size=18),
                         ft.Text(str(low_count) + " کالا نیاز به تأمین دارد", size=13, color=C_RED, weight=ft.FontWeight.BOLD),
@@ -450,7 +454,7 @@ def main(page: ft.Page):
         set_body(controls)
 
     # ══════════════════════════════════════════
-    #  فرم کالا - بدون قیمت و فروشنده
+    #  فرم کالا
     # ══════════════════════════════════════════
     def show_product_form(row=None):
         is_edit = row is not None
@@ -458,7 +462,7 @@ def main(page: ft.Page):
         f_unit = ft.TextField(label="واحد (مثال: کیسه، عدد، متر)", value=row["unit"] if is_edit else "عدد", border_color=C_BLUE)
         f_cat  = ft.Dropdown(label="دسته‌بندی", options=[ft.dropdown.Option(c) for c in CATS], value=row["category"] if is_edit else "ساختمانی")
         f_min  = ft.TextField(label="حداقل موجودی هشدار", value=str(row["min_qty"]) if is_edit else "0", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
-        f_note = ft.TextField(label="توضیحات (اختیاری)", value=row["note"] if is_edit else "", border_color=C_BLUE, multiline=True)
+        f_note = ft.TextField(label="توضیحات (اختیاری)", value=row["note"] if is_edit else "", border_color=C_BLUE)
 
         def save(e):
             name = f_name.value.strip()
@@ -483,7 +487,7 @@ def main(page: ft.Page):
             render_products()
 
         set_body([
-            header("ویرایش کالا" if is_edit else "کالای جدید", render_products),
+            page_header("ویرایش کالا" if is_edit else "کالای جدید", render_products),
             ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
                 f_name, f_unit, f_cat, f_min, f_note,
                 ft.Container(height=8),
@@ -497,7 +501,7 @@ def main(page: ft.Page):
     def render_txn():
         products = db.all_products()
         if not products:
-            set_body([header("ورود / خروج"), ft.Container(padding=40, content=ft.Column(
+            set_body([page_header("ورود / خروج"), ft.Container(padding=40, content=ft.Column(
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=60, color=C_GRAY), ft.Text("ابتدا کالا اضافه کنید", size=16, color=C_GRAY)],
             ))])
@@ -506,15 +510,15 @@ def main(page: ft.Page):
         names = [r["name"] for r in products]
         prod_map = {r["name"]: r for r in products}
 
-        f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0])
-        f_type    = ft.Dropdown(label="نوع عملیات", options=[ft.dropdown.Option("ورود"), ft.dropdown.Option("خروج")], value="ورود")
-        f_qty     = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
-        f_price   = ft.TextField(label="قیمت واحد (تومان)", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
-        f_supplier= ft.TextField(label="نام فروشنده / مصالح‌فروش", border_color=C_BLUE)
-        f_invoice = ft.TextField(label="شماره فاکتور", border_color=C_BLUE)
-        f_receipt = ft.TextField(label="شماره رسید انبار (اختیاری)", border_color=C_BLUE)
-        f_note    = ft.TextField(label="یادداشت", border_color=C_BLUE)
-        f_date    = ft.TextField(label="تاریخ (شمسی)", value=jdatetime.datetime.now().strftime("%Y-%m-%d"), border_color=C_BLUE)
+        f_product  = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0])
+        f_type     = ft.Dropdown(label="نوع عملیات", options=[ft.dropdown.Option("ورود"), ft.dropdown.Option("خروج")], value="ورود")
+        f_qty      = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
+        f_price    = ft.TextField(label="قیمت واحد (تومان)", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
+        f_supplier = ft.TextField(label="نام فروشنده / مصالح‌فروش", border_color=C_BLUE)
+        f_invoice  = ft.TextField(label="شماره فاکتور", border_color=C_BLUE)
+        f_receipt  = ft.TextField(label="شماره رسید انبار (اختیاری)", border_color=C_BLUE)
+        f_note     = ft.TextField(label="یادداشت", border_color=C_BLUE)
+        f_date     = ft.TextField(label="تاریخ (شمسی)", value=jdatetime.datetime.now().strftime("%Y-%m-%d"), border_color=C_BLUE)
 
         qty_box = ft.Container(
             border_radius=10, bgcolor=C_BLUE + "15", padding=12,
@@ -524,7 +528,6 @@ def main(page: ft.Page):
             ]),
         )
 
-        # فیلدهای مخصوص ورود
         in_fields = ft.Column(spacing=12, controls=[f_price, f_supplier, f_invoice, f_receipt])
 
         def on_product_change(e):
@@ -549,29 +552,24 @@ def main(page: ft.Page):
                 return
 
             is_in = f_type.value == "ورود"
-
             if is_in:
                 try:
                     price = float(f_price.value or 0)
                 except ValueError:
                     snack("قیمت نادرست است", C_RED)
                     return
-                supplier  = f_supplier.value.strip()
-                invoice   = f_invoice.value.strip()
-                receipt   = f_receipt.value.strip()
+                supplier = f_supplier.value.strip()
+                invoice  = f_invoice.value.strip()
+                receipt  = f_receipt.value.strip()
             else:
-                price    = 0
+                price = 0
                 supplier = ""
                 invoice  = ""
                 receipt  = ""
 
             delta = qty if is_in else -qty
             row   = prod_map[f_product.value]
-            ok    = db.add_txn(
-                row["name"], row["category"], delta, price,
-                supplier, f_note.value.strip(),
-                f_date.value.strip(), invoice, receipt,
-            )
+            ok    = db.add_txn(row["name"], row["category"], delta, price, supplier, f_note.value.strip(), f_date.value.strip(), invoice, receipt)
             if not ok:
                 snack("موجودی کافی نیست!", C_RED)
                 return
@@ -587,7 +585,7 @@ def main(page: ft.Page):
             page.update()
 
         set_body([
-            header("ورود / خروج کالا"),
+            page_header("ورود / خروج کالا"),
             ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
                 f_product, qty_box, f_type, f_qty,
                 in_fields,
@@ -611,7 +609,7 @@ def main(page: ft.Page):
         f_supplier= ft.TextField(label="فروشنده", value=row["supplier"] or "", border_color=C_BLUE, visible=is_in)
         f_invoice = ft.TextField(label="شماره فاکتور", value=row["invoice_no"] or "", border_color=C_BLUE, visible=is_in)
         f_receipt = ft.TextField(label="شماره رسید انبار", value=row["receipt_no"] or "", border_color=C_BLUE, visible=is_in)
-        f_note    = ft.TextField(label="یادداشت", value=row["note"] or "", border_color=C_BLUE, multiline=True)
+        f_note    = ft.TextField(label="یادداشت", value=row["note"] or "", border_color=C_BLUE)
         f_date    = ft.TextField(label="تاریخ (شمسی)", value=row["jdate"], border_color=C_BLUE)
 
         def save(e):
@@ -625,7 +623,7 @@ def main(page: ft.Page):
                 snack("تعداد باید بزرگتر از صفر باشد", C_YELLOW)
                 return
             ok = db.update_txn(
-                txn_id, 1 if is_in else -1, qty, price,
+                txn_id, is_in, qty, price,
                 f_supplier.value.strip() if is_in else "",
                 f_note.value.strip(), f_date.value.strip(),
                 f_invoice.value.strip() if is_in else "",
@@ -643,13 +641,12 @@ def main(page: ft.Page):
             back_fn()
 
         set_body([
-            header("ویرایش تراکنش", back_fn),
+            page_header("ویرایش تراکنش", back_fn),
             ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
                 ft.Container(border_radius=10, bgcolor="#EFF6FF", padding=12,
                     content=ft.Column(spacing=4, controls=[
                         ft.Text("کالا: " + row["product_name"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
                         ft.Text("نوع: " + ("ورود" if is_in else "خروج"), size=13, color=C_GREEN if is_in else C_RED),
-                        ft.Text("تاریخ ثبت: " + row["jdate"], size=12, color=C_GRAY),
                     ])),
                 f_qty, f_price, f_supplier, f_invoice, f_receipt, f_note, f_date,
                 ft.Container(height=4),
@@ -675,47 +672,42 @@ def main(page: ft.Page):
 
         results = ft.Column(spacing=8)
         active_rtab = [0]
-        tabs_row = ft.Row(spacing=0)
 
-        def make_tabs():
-            def tab_btn(label, index):
-                def click(e):
-                    active_rtab[0] = index
-                    make_tabs()
-                    page.update()
-                is_active = active_rtab[0] == index
-                return ft.Container(
-                    expand=True, on_click=click, padding=10,
-                    bgcolor=C_BLUE if is_active else C_WHITE,
-                    content=ft.Text(label, size=12, text_align=ft.TextAlign.CENTER,
-                        color="white" if is_active else C_GRAY,
-                        weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL),
-                )
-            tabs_row.controls = [
-                tab_btn("تراکنش‌ها", 0),
-                tab_btn("خلاصه کالا", 1),
-                tab_btn("فروشندگان", 2),
-                tab_btn("کم‌موجود", 3),
-            ]
+        tab0 = ft.Container(expand=True, padding=10, bgcolor=C_BLUE,
+            content=ft.Text("تراکنش‌ها", size=12, text_align=ft.TextAlign.CENTER, color="white", weight=ft.FontWeight.BOLD))
+        tab1 = ft.Container(expand=True, padding=10, bgcolor=C_WHITE,
+            content=ft.Text("خلاصه کالا", size=12, text_align=ft.TextAlign.CENTER, color=C_GRAY))
+        tab2 = ft.Container(expand=True, padding=10, bgcolor=C_WHITE,
+            content=ft.Text("فروشندگان", size=12, text_align=ft.TextAlign.CENTER, color=C_GRAY))
+        tab3 = ft.Container(expand=True, padding=10, bgcolor=C_WHITE,
+            content=ft.Text("کم‌موجود", size=12, text_align=ft.TextAlign.CENTER, color=C_GRAY))
+
+        all_tabs = [tab0, tab1, tab2, tab3]
+
+        def select_tab(index):
+            active_rtab[0] = index
+            for i, t in enumerate(all_tabs):
+                t.bgcolor = C_BLUE if i == index else C_WHITE
+                t.content.color = "white" if i == index else C_GRAY
+                t.content.weight = ft.FontWeight.BOLD if i == index else ft.FontWeight.NORMAL
+            page.update()
+
+        tab0.on_click = lambda e: select_tab(0)
+        tab1.on_click = lambda e: select_tab(1)
+        tab2.on_click = lambda e: select_tab(2)
+        tab3.on_click = lambda e: select_tab(3)
+
+        tabs_row = ft.Row(spacing=0, controls=all_tabs)
 
         def search(e):
             nonlocal report_rows
             tab   = active_rtab[0]
             start = f_start.value.strip()
             end   = f_end.value.strip()
-
             results.controls.clear()
 
             if tab == 0:
-                rows = db.search_txns(
-                    start, end,
-                    f_product.value.strip(),
-                    f_supplier.value.strip(),
-                    f_type.value,
-                    f_cat.value,
-                    f_invoice.value.strip(),
-                    f_receipt.value.strip(),
-                )
+                rows = db.search_txns(start, end, f_product.value.strip(), f_supplier.value.strip(), f_type.value, f_cat.value, f_invoice.value.strip(), f_receipt.value.strip())
                 report_rows = list(rows)
 
                 if not rows:
@@ -728,18 +720,9 @@ def main(page: ft.Page):
                     results.controls.append(ft.Container(
                         border_radius=10, bgcolor="#EFF6FF", padding=12,
                         content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                            ft.Column(spacing=2, controls=[
-                                ft.Text("ورود", size=11, color=C_GRAY),
-                                ft.Text(str(total_in), size=15, weight=ft.FontWeight.BOLD, color=C_GREEN),
-                            ]),
-                            ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                                ft.Text("خروج", size=11, color=C_GRAY),
-                                ft.Text(str(total_out), size=15, weight=ft.FontWeight.BOLD, color=C_RED),
-                            ]),
-                            ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
-                                ft.Text("ارزش ورودی", size=11, color=C_GRAY),
-                                ft.Text("{:,.0f}ت".format(total_val), size=15, weight=ft.FontWeight.BOLD, color=C_BLUE),
-                            ]),
+                            ft.Column(spacing=2, controls=[ft.Text("ورود", size=11, color=C_GRAY), ft.Text(str(total_in), size=15, weight=ft.FontWeight.BOLD, color=C_GREEN)]),
+                            ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[ft.Text("خروج", size=11, color=C_GRAY), ft.Text(str(total_out), size=15, weight=ft.FontWeight.BOLD, color=C_RED)]),
+                            ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[ft.Text("ارزش ورودی", size=11, color=C_GRAY), ft.Text("{:,.0f}ت".format(total_val), size=15, weight=ft.FontWeight.BOLD, color=C_BLUE)]),
                         ]),
                     ))
 
@@ -747,33 +730,29 @@ def main(page: ft.Page):
                         is_in = r["delta"] > 0
                         tid = r["id"]
 
-                        def make_edit_fn(t):
+                        def make_edit(t):
                             def fn(e): show_edit_txn(t, render_reports)
                             return fn
 
-                        info_lines = []
-                        if r["supplier"]: info_lines.append("فروشنده: " + r["supplier"])
-                        if r["invoice_no"]: info_lines.append("فاکتور: " + r["invoice_no"])
-                        if r["receipt_no"]: info_lines.append("رسید: " + r["receipt_no"])
-                        if r["note"]: info_lines.append(r["note"])
+                        info = []
+                        if r["supplier"]: info.append("فروشنده: " + r["supplier"])
+                        if r["invoice_no"]: info.append("فاکتور: " + r["invoice_no"])
+                        if r["receipt_no"]: info.append("رسید: " + r["receipt_no"])
+                        if r["note"]: info.append(r["note"])
 
                         results.controls.append(ft.Container(
                             border_radius=10, bgcolor=C_WHITE, padding=12,
                             content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                 ft.Column(spacing=3, expand=True, controls=[
                                     ft.Text(r["product_name"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
-                                    ft.Text(r["jdate"] + "  |  " + r["category"], size=11, color=C_GRAY),
-                                ] + [ft.Text(line, size=11, color=C_BLUE) for line in info_lines]),
+                                    ft.Text(r["jdate"] + " | " + r["category"], size=11, color=C_GRAY),
+                                ] + [ft.Text(line, size=11, color=C_BLUE) for line in info]),
                                 ft.Column(spacing=4, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
                                     ft.Container(border_radius=6, padding=6,
                                         bgcolor="#DCFCE7" if is_in else "#FEE2E2",
-                                        content=ft.Text(
-                                            ("↑ " if is_in else "↓ ") + str(abs(r["delta"])),
-                                            color=C_GREEN if is_in else C_RED,
-                                            size=13, weight=ft.FontWeight.BOLD,
-                                        )),
+                                        content=ft.Text(("↑ " if is_in else "↓ ") + str(abs(r["delta"])), color=C_GREEN if is_in else C_RED, size=13, weight=ft.FontWeight.BOLD)),
                                     ft.Text("{:,.0f}ت".format(abs(r["delta"]) * r["price"]) if is_in else "", size=11, color=C_GRAY),
-                                    ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=C_BLUE, icon_size=16, on_click=make_edit_fn(tid)),
+                                    ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=C_BLUE, icon_size=16, on_click=make_edit(tid)),
                                 ]),
                             ]),
                         ))
@@ -786,17 +765,15 @@ def main(page: ft.Page):
                     for r in rows:
                         results.controls.append(ft.Container(
                             border_radius=10, bgcolor=C_WHITE, padding=12,
-                            content=ft.Column(spacing=6, controls=[
-                                ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                                    ft.Column(spacing=2, expand=True, controls=[
-                                        ft.Text(r["product_name"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
-                                        ft.Text(r["category"], size=11, color=C_GRAY),
-                                    ]),
-                                    ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
-                                        ft.Text("ورود: " + str(r["total_in"]), size=12, color=C_GREEN),
-                                        ft.Text("خروج: " + str(r["total_out"]), size=12, color=C_RED),
-                                        ft.Text("{:,.0f}ت".format(r["total_val"]), size=12, weight=ft.FontWeight.BOLD, color=C_BLUE),
-                                    ]),
+                            content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
+                                ft.Column(spacing=2, expand=True, controls=[
+                                    ft.Text(r["product_name"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                                    ft.Text(r["category"], size=11, color=C_GRAY),
+                                ]),
+                                ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
+                                    ft.Text("ورود: " + str(r["total_in"]), size=12, color=C_GREEN),
+                                    ft.Text("خروج: " + str(r["total_out"]), size=12, color=C_RED),
+                                    ft.Text("{:,.0f}ت".format(r["total_val"]), size=12, weight=ft.FontWeight.BOLD, color=C_BLUE),
                                 ]),
                             ]),
                         ))
@@ -812,7 +789,7 @@ def main(page: ft.Page):
                             content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                 ft.Column(spacing=2, expand=True, controls=[
                                     ft.Text(r["supplier"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
-                                    ft.Text(str(r["cnt"]) + " بار خرید  |  " + str(r["total_qty"]) + " واحد", size=12, color=C_GRAY),
+                                    ft.Text(str(r["cnt"]) + " بار خرید | " + str(r["total_qty"]) + " واحد", size=12, color=C_GRAY),
                                 ]),
                                 ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
                                     ft.Text("جمع خرید", size=10, color=C_GRAY),
@@ -850,7 +827,7 @@ def main(page: ft.Page):
 
             page.update()
 
-        def export(e):
+        def export_csv(e):
             nonlocal report_rows
             if not report_rows:
                 snack("ابتدا جستجو کنید", C_YELLOW)
@@ -873,16 +850,13 @@ def main(page: ft.Page):
                 dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
                 Path(dl).mkdir(parents=True, exist_ok=True)
                 fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
-                fpath = Path(dl) / fname
-                db.export_txt(report_rows, fpath)
-                snack("گزارش متنی ذخیره شد: " + fname, C_GREEN)
+                db.export_txt(report_rows, Path(dl) / fname)
+                snack("گزارش متنی ذخیره شد ✓", C_GREEN)
             except Exception as ex:
                 snack("خطا: " + str(ex), C_RED)
 
-        make_tabs()
-
         set_body([
-            header("گزارشات"),
+            page_header("گزارشات"),
             ft.Container(padding=12, content=ft.Column(spacing=10, controls=[
                 ft.Row(controls=[f_start, f_end], spacing=10),
                 f_product, f_supplier,
@@ -890,7 +864,7 @@ def main(page: ft.Page):
                 ft.Row(controls=[f_type, f_cat], spacing=10),
                 ft.Row(spacing=10, controls=[
                     ft.ElevatedButton("🔍 نمایش", on_click=search, bgcolor=C_BLUE, color="white", expand=True, height=44),
-                    ft.ElevatedButton("📥 CSV", on_click=export, bgcolor=C_WHITE, color=C_BLUE, height=44),
+                    ft.ElevatedButton("📥 CSV", on_click=export_csv, bgcolor=C_WHITE, color=C_BLUE, height=44),
                     ft.ElevatedButton("🖨️", on_click=export_txt, bgcolor=C_WHITE, color=C_BLUE, height=44, width=54),
                 ]),
             ])),
@@ -954,7 +928,7 @@ def main(page: ft.Page):
                 ))
 
         set_body([
-            header("پشتیبان‌گیری", render_products),
+            page_header("پشتیبان‌گیری", render_products),
             ft.Container(padding=16, content=ft.Column(spacing=10, controls=items)),
         ])
 
