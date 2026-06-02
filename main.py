@@ -239,7 +239,14 @@ class DB:
                 f.write("\n")
 
     def manual_backup(self):
-        dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
+        # استفاده از مسیر امن Flet
+        try:
+            dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS")
+            if not dl:
+                dl = os.path.expanduser("~/Downloads")
+        except:
+            dl = os.path.expanduser("~/Downloads")
+
         dl = Path(dl)
         dl.mkdir(parents=True, exist_ok=True)
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
@@ -466,13 +473,41 @@ def main(page: ft.Page):
 
             in_fields = ft.Column(spacing=12, visible=True, controls=[f_price, f_supplier, f_invoice, f_receipt])
 
+            emergency_btn_container = ft.Container(
+                visible=False,
+                content=ft.ElevatedButton(
+                    "⚡ رفع محدودیت خروج",
+                    on_click=lambda e: emergency_fix(),
+                    bgcolor=C_ORANGE,
+                    color="white",
+                    height=44,
+                    expand=True,
+                ),
+            )
+
+            def emergency_fix():
+                row = prod_map[f_product.value]
+                db.add_txn(
+                    row["name"], row["category"], 100000,
+                    0, "موجودی فرضی",
+                    "رفع محدودیت خروج - موجودی واقعی بعداً اصلاح شود",
+                    jdatetime.datetime.now().strftime("%Y-%m-%d"),
+                    "", ""
+                )
+                snack(f"موجودی {row['name']} موقتاً ۱۰۰۰۰۰ تا شد. حالا می‌تونی خروج بدی.", C_GREEN)
+                qty_box.content.controls[1].value = str(db.qty(row["name"]))
+                page.update()
+
             def on_product_change(e):
                 qty_box.content.controls[1].value = str(db.qty(f_product.value))
                 page.update()
 
             def on_type_change(e):
-                in_fields.visible = (f_type.value == "ورود")
+                is_in = f_type.value == "ورود"
+                in_fields.visible = is_in
+                emergency_btn_container.visible = not is_in
                 in_fields.update()
+                emergency_btn_container.update()
                 page.update()
 
             f_product.on_change = on_product_change
@@ -511,20 +546,6 @@ def main(page: ft.Page):
                 f_invoice.value = ""; f_receipt.value = ""; f_note.value = ""
                 page.update()
 
-            # دکمه اضطراری برای رفع محدودیت خروج
-            def emergency_fix(e):
-                row = prod_map[f_product.value]
-                db.add_txn(
-                    row["name"], row["category"], 100000,
-                    0, "موجودی فرضی",
-                    "رفع محدودیت خروج - موجودی واقعی بعداً اصلاح شود",
-                    jdatetime.datetime.now().strftime("%Y-%m-%d"),
-                    "", ""
-                )
-                snack(f"موجودی {row['name']} موقتاً ۱۰۰۰۰۰ تا شد. حالا می‌تونی خروج بدی.", C_GREEN)
-                qty_box.content.controls[1].value = str(db.qty(row["name"]))
-                page.update()
-
             set_body([
                 page_header("ورود / خروج کالا"),
                 ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
@@ -532,17 +553,7 @@ def main(page: ft.Page):
                     in_fields,
                     f_note, f_date,
                     ft.ElevatedButton("ثبت", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True),
-                    ft.Container(
-                        visible=(f_type.value == "خروج"),
-                        content=ft.ElevatedButton(
-                            "⚡ رفع محدودیت خروج",
-                            on_click=emergency_fix,
-                            bgcolor=C_ORANGE,
-                            color="white",
-                            height=44,
-                            expand=True,
-                        ),
-                    ),
+                    emergency_btn_container,
                 ])),
             ])
 
@@ -739,12 +750,14 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
+                    dl = page.get_downloads_directory()
+                    if not dl:
+                        dl = os.path.expanduser("~/Downloads")
                     dl = Path(dl)
                     dl.mkdir(parents=True, exist_ok=True)
                     fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
                     db.export_csv(report_rows, dl / fname)
-                    snack("CSV ذخیره شد ✓", C_GREEN)
+                    snack("CSV ذخیره شد ✓\n" + str(dl / fname), C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -754,12 +767,14 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
+                    dl = page.get_downloads_directory()
+                    if not dl:
+                        dl = os.path.expanduser("~/Downloads")
                     dl = Path(dl)
                     dl.mkdir(parents=True, exist_ok=True)
                     fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
                     db.export_txt(report_rows, dl / fname)
-                    snack("گزارش متنی ذخیره شد ✓", C_GREEN)
+                    snack("گزارش متنی ذخیره شد ✓\n" + str(dl / fname), C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
