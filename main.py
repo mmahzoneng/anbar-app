@@ -213,8 +213,8 @@ class DB:
 
     def export_txt(self, rows, path):
         with open(str(path), "w", encoding="utf-8") as f:
-            f.write("گزارش انبار حرفه‌ای\n")
-            f.write("تاریخ چاپ: " + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M") + "\n")
+            f.write("گزارش انبار فاز ۷\n")
+            f.write("تاریخ چاپ: ," + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M") + "\n")
             f.write("="*50 + "\n\n")
             total_in  = sum(r["delta"] for r in rows if r["delta"] > 0)
             total_out = sum(abs(r["delta"]) for r in rows if r["delta"] < 0)
