@@ -26,8 +26,6 @@ def log_error(msg):
 
 sys.excepthook = lambda t,v,tb: log_error("".join(traceback.format_exception(t,v,tb)))
 
-DUMMY_QTY = 100000  # موجودی فرضی برای کالاهای بدون موجودی اولیه
-
 
 class DB:
     def __init__(self):
@@ -113,15 +111,6 @@ class DB:
         with self._conn() as c:
             return c.execute("SELECT COALESCE(SUM(delta),0) FROM txns WHERE product_name=?", (name,)).fetchone()[0]
 
-    def ensure_balance(self, name, category):
-        """اگه موجودی صفر بود، موجودی فرضی اضافه کن"""
-        if self.qty(name) <= 0:
-            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            jd = jdatetime.datetime.now().strftime("%Y-%m-%d")
-            with self._conn() as c:
-                c.execute("INSERT INTO txns (product_name,category,delta,balance,price,supplier,note,invoice_no,receipt_no,jdate,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (name, category, DUMMY_QTY, DUMMY_QTY, 0, "", "موجودی فرضی (راه‌اندازی)", "", "", jd, now))
-
     def add_txn(self, name, category, delta, price, supplier, note, jdate, invoice_no, receipt_no):
         with self._conn() as c:
             current = c.execute("SELECT COALESCE(SUM(delta),0) FROM txns WHERE product_name=?", (name,)).fetchone()[0]
@@ -132,6 +121,21 @@ class DB:
             jd = jdate or jdatetime.datetime.now().strftime("%Y-%m-%d")
             c.execute("INSERT INTO txns (product_name,category,delta,balance,price,supplier,note,invoice_no,receipt_no,jdate,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (name, category, delta, balance, price, supplier, note, invoice_no, receipt_no, jd, now))
+        return True
+
+    def set_current_qty(self, name, category, qty, note=""):
+        """تنظیم موجودی جاری با یک تراکنش ورود با قیمت صفر (بدون فاکتور/فروشنده)"""
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        jd = jdatetime.datetime.now().strftime("%Y-%m-%d")
+        with self._conn() as c:
+            current = c.execute("SELECT COALESCE(SUM(delta),0) FROM txns WHERE product_name=?", (name,)).fetchone()[0]
+            if current > 0:
+                # اگر موجودی فعلی مثبت است، نمی‌توانیم مستقیم تنظیم کنیم (برای سادگی، ابتدا حذف نمی‌کنیم)
+                # بهتر است یک تراکنش تنظیم جداگانه ثبت نشود. در عوض، خطا بدهد.
+                return False
+            # ثبت یک تراکنش ورود با قیمت صفر
+            c.execute("INSERT INTO txns (product_name,category,delta,balance,price,supplier,note,invoice_no,receipt_no,jdate,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (name, category, qty, qty, 0, "", note or "تنظیم موجودی جاری", "", "", jd, now))
         return True
 
     def get_txn(self, txn_id):
@@ -183,7 +187,7 @@ class DB:
             return c.execute(q, params).fetchall()
 
     def summary_by_supplier(self, start="", end=""):
-        conds = ["supplier != ''", "delta > 0", "note != 'موجودی فرضی (راه‌اندازی)'"]
+        conds = ["supplier != ''", "delta > 0"]
         params = []
         if start and end: conds.append("jdate BETWEEN ? AND ?"); params += [start, end]
         q = "SELECT supplier, COUNT(*) as cnt, SUM(delta) as total_qty, SUM(delta*price) as total_val FROM txns WHERE " + " AND ".join(conds) + " GROUP BY supplier ORDER BY total_val DESC"
@@ -199,7 +203,7 @@ class DB:
             rows = c.execute("SELECT product_name, SUM(delta) as qty FROM txns GROUP BY product_name").fetchall()
             for r in rows:
                 if r["qty"] and r["qty"] > 0:
-                    last = c.execute("SELECT price FROM txns WHERE product_name=? AND delta>0 AND note != 'موجودی فرضی (راه‌اندازی)' ORDER BY ts DESC LIMIT 1", (r["product_name"],)).fetchone()
+                    last = c.execute("SELECT price FROM txns WHERE product_name=? AND delta>0 ORDER BY ts DESC LIMIT 1", (r["product_name"],)).fetchone()
                     if last: total += r["qty"] * last["price"]
         return total
 
@@ -214,7 +218,7 @@ class DB:
     def export_txt(self, rows, path):
         with open(str(path), "w", encoding="utf-8") as f:
             f.write("گزارش انبار فاز ۷\n")
-            f.write("تاریخ چاپ: ," + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M") + "\n")
+            f.write("تاریخ چاپ: " + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M") + "\n")
             f.write("="*50 + "\n\n")
             total_in  = sum(r["delta"] for r in rows if r["delta"] > 0)
             total_out = sum(abs(r["delta"]) for r in rows if r["delta"] < 0)
@@ -229,18 +233,15 @@ class DB:
                     if r["invoice_no"]: f.write("  فاکتور: "+r["invoice_no"]+"\n")
                     if r["receipt_no"]: f.write("  رسید: "+r["receipt_no"]+"\n")
                     f.write("  ارزش: "+"{:,.0f}".format(abs(r["delta"])*r["price"])+" تومان\n")
-                if r["note"] and r["note"] != "موجودی فرضی (راه‌اندازی)": f.write("  یادداشت: "+r["note"]+"\n")
+                if r["note"]: f.write("  یادداشت: "+r["note"]+"\n")
                 f.write("\n")
 
     def manual_backup(self):
-        # ۱- ذخیره در پوشهٔ امن exports (کنار دیتابیس)
         exports_dir = self._db_dir / "exports"
         exports_dir.mkdir(parents=True, exist_ok=True)
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
         shutil.copy2(self.path, exports_dir / name)
-        # ۲- ذخیره در پوشهٔ مخصوص بکاپ
         shutil.copy2(self.path, self.backup_dir / name)
-        # ۳- تلاش برای ذخیره در Downloads (اگر نشد، فقط بی‌خیال شو)
         try:
             dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
             dl = Path(dl)
@@ -273,7 +274,7 @@ CATS    = ["ساختمانی", "آشپزخانه"]
 
 def main(page: ft.Page):
     try:
-        page.title = "انبار فاز7"
+        page.title = "انبار فاز 7"
         page.rtl = True
         page.theme_mode = ft.ThemeMode.LIGHT
         page.bgcolor = BG
@@ -286,7 +287,7 @@ def main(page: ft.Page):
         body = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
 
         def snack(msg, color=C_BLUE):
-            page.snack_bar = ft.SnackBar(ft.Text(msg, color="white"), bgcolor=color, duration=3000)
+            page.snack_bar = ft.SnackBar(ft.Text(msg, color="white"), bgcolor=color, duration=4000)
             page.snack_bar.open = True
             page.update()
 
@@ -302,9 +303,47 @@ def main(page: ft.Page):
             ctrls.append(ft.Text(title, size=20, weight=ft.FontWeight.BOLD, color=C_DARK, expand=True))
             return ft.Container(bgcolor=C_WHITE, padding=12, content=ft.Row(controls=ctrls, spacing=4))
 
-        # ══════════════════════════════════════════
-        #  داشبورد
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # تنظیم موجودی جاری (بدون نیاز به قیمت)
+        # ----------------------------------------------
+        def show_set_qty_dialog(product_row, on_success):
+            f_qty = ft.TextField(label="موجودی جاری (تعداد)", value="0", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
+            f_note = ft.TextField(label="توضیح (اختیاری)", hint_text="مثلاً: تخمین موجودی", border_color=C_BLUE)
+
+            def save(e):
+                try:
+                    new_qty = float(f_qty.value or 0)
+                except ValueError:
+                    snack("مقدار نامعتبر است", C_RED)
+                    return
+                if new_qty <= 0:
+                    snack("موجودی باید بزرگتر از صفر باشد", C_YELLOW)
+                    return
+                ok = db.set_current_qty(product_row["name"], product_row["category"], new_qty, f_note.value.strip())
+                if not ok:
+                    snack("امکان تنظیم موجودی وجود ندارد (موجودی فعلی غیرصفر است)", C_RED)
+                    return
+                snack("موجودی جاری با موفقیت تنظیم شد", C_GREEN)
+                dialog.open = False
+                on_success()
+                page.update()
+
+            dialog = ft.AlertDialog(
+                title=ft.Text(f"تنظیم موجودی جاری: {product_row['name']}"),
+                content=ft.Column([f_qty, f_note], spacing=10),
+                actions=[
+                    ft.TextButton("ثبت", on_click=save),
+                    ft.TextButton("انصراف", on_click=lambda e: setattr(dialog, "open", False)),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            page.dialog = dialog
+            dialog.open = True
+            page.update()
+
+        # ----------------------------------------------
+        # داشبورد
+        # ----------------------------------------------
         def render_products():
             rows = db.all_products()
             low_count = len(db.low_stock())
@@ -314,7 +353,7 @@ def main(page: ft.Page):
                 ft.Container(bgcolor=C_BLUE, padding=20, content=ft.Column(spacing=10, controls=[
                     ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                         ft.Column(spacing=4, controls=[
-                            ft.Text("انبار حرفه‌ای", size=22, weight=ft.FontWeight.BOLD, color="white"),
+                            ft.Text("انبار فاز 7", size=22, weight=ft.FontWeight.BOLD, color="white"),
                             ft.Text(jdatetime.date.today().strftime("%Y/%m/%d"), size=13, color="#BFDBFE"),
                         ]),
                         ft.Container(border_radius=12, bgcolor=C_BLUE2, padding=12,
@@ -365,6 +404,9 @@ def main(page: ft.Page):
                         db.delete_product(n)
                         snack(n + " حذف شد", C_RED)
                         render_products()
+                    def on_set_qty(e, row=r):
+                        show_set_qty_dialog(row, render_products)
+
                     controls.append(ft.Container(margin=10, border_radius=14, bgcolor=C_WHITE, padding=14,
                         content=ft.Column(spacing=10, controls=[
                             ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
@@ -392,6 +434,9 @@ def main(page: ft.Page):
                                     ft.Text(r["unit"], size=13, color=C_DARK),
                                 ]),
                             ]),
+                            ft.Row(alignment=ft.MainAxisAlignment.END, controls=[
+                                ft.ElevatedButton("🔧 تنظیم موجودی جاری", on_click=on_set_qty, bgcolor=C_WHITE, color=C_BLUE, height=35, expand=True),
+                            ]),
                             ft.Container(visible=low, border_radius=8, bgcolor="#FEF2F2", padding=8,
                                 content=ft.Row(spacing=6, controls=[
                                     ft.Icon(ft.Icons.WARNING_AMBER, color=C_RED, size=16),
@@ -400,9 +445,9 @@ def main(page: ft.Page):
                         ])))
             set_body(controls)
 
-        # ══════════════════════════════════════════
-        #  فرم کالا - بدون موجودی اولیه
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # فرم کالا (با موجودی اولیه اختیاری)
+        # ----------------------------------------------
         def show_product_form(row=None):
             is_edit = row is not None
             f_name = ft.TextField(label="نام کالا", value=row["name"] if is_edit else "", border_color=C_BLUE)
@@ -410,6 +455,7 @@ def main(page: ft.Page):
             f_cat  = ft.Dropdown(label="دسته‌بندی", options=[ft.dropdown.Option(c) for c in CATS], value=row["category"] if is_edit else "ساختمانی")
             f_min  = ft.TextField(label="حداقل موجودی هشدار", value=str(row["min_qty"]) if is_edit else "0", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_note = ft.TextField(label="توضیحات (اختیاری)", value=row["note"] if is_edit else "", border_color=C_BLUE)
+            f_initial = ft.TextField(label="موجودی اولیه (برای کالای جدید)", value="0", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
 
             def save(e):
                 name = f_name.value.strip()
@@ -418,8 +464,9 @@ def main(page: ft.Page):
                     return
                 try:
                     min_qty = float(f_min.value or 0)
+                    initial = float(f_initial.value or 0) if not is_edit else 0
                 except ValueError:
-                    snack("حداقل موجودی باید عدد باشد", C_RED)
+                    snack("مقادیر عددی نادرست است", C_RED)
                     return
                 try:
                     if is_edit:
@@ -427,24 +474,28 @@ def main(page: ft.Page):
                         snack(name + " ویرایش شد", C_GREEN)
                     else:
                         db.add_product(name, f_unit.value.strip(), f_cat.value, min_qty, f_note.value.strip())
+                        if initial > 0:
+                            db.set_current_qty(name, f_cat.value, initial, "موجودی اولیه")
                         snack(name + " اضافه شد", C_GREEN)
                 except sqlite3.IntegrityError:
                     snack("این نام قبلاً ثبت شده است", C_RED)
                     return
                 render_products()
 
+            items = [f_name, f_unit, f_cat, f_min, f_note]
+            if not is_edit:
+                items.append(f_initial)
+            items.append(ft.Container(height=8))
+            items.append(ft.ElevatedButton("ذخیره" if is_edit else "افزودن کالا", on_click=save, bgcolor=C_BLUE, color="white", height=48, expand=True))
+
             set_body([
                 page_header("ویرایش کالا" if is_edit else "کالای جدید", render_products),
-                ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
-                    f_name, f_unit, f_cat, f_min, f_note,
-                    ft.Container(height=8),
-                    ft.ElevatedButton("ذخیره" if is_edit else "افزودن کالا", on_click=save, bgcolor=C_BLUE, color="white", height=48, expand=True),
-                ])),
+                ft.Container(padding=16, content=ft.Column(spacing=12, controls=items)),
             ])
 
-        # ══════════════════════════════════════════
-        #  ورود / خروج
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # ورود / خروج (با نمایش شرطی فیلدها)
+        # ----------------------------------------------
         def render_txn():
             products = db.all_products()
             if not products:
@@ -463,12 +514,12 @@ def main(page: ft.Page):
             f_note    = ft.TextField(label="یادداشت", border_color=C_BLUE)
             f_date    = ft.TextField(label="تاریخ (شمسی)", value=jdatetime.datetime.now().strftime("%Y-%m-%d"), border_color=C_BLUE)
 
-            # فقط برای ورود
+            # فیلدهای مخصوص ورود
             f_price    = ft.TextField(label="قیمت واحد (تومان)", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_supplier = ft.TextField(label="نام فروشنده / مصالح‌فروش", border_color=C_BLUE)
             f_invoice  = ft.TextField(label="شماره فاکتور", border_color=C_BLUE)
             f_receipt  = ft.TextField(label="شماره رسید انبار (اختیاری)", border_color=C_BLUE)
-            in_fields  = ft.Column(spacing=12, controls=[f_price, f_supplier, f_invoice, f_receipt])
+            in_fields = ft.Column(spacing=12, controls=[f_price, f_supplier, f_invoice, f_receipt])
 
             qty_box = ft.Container(border_radius=10, bgcolor=C_BLUE+"15", padding=12,
                 content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
@@ -480,11 +531,13 @@ def main(page: ft.Page):
                 qty_box.content.controls[1].value = str(db.qty(f_product.value))
                 page.update()
 
-            def on_type_change(e):
-                # به‌جای مخفی کردن، خود set_body دوباره صدا زده می‌شه
-                render_txn()
-
             f_product.on_change = on_product_change
+
+            def on_type_change(e):
+                is_in = f_type.value == "ورود"
+                in_fields.visible = is_in
+                page.update()
+
             f_type.on_change = on_type_change
 
             def save(e):
@@ -511,11 +564,11 @@ def main(page: ft.Page):
                     delta = qty
                     ok = db.add_txn(row["name"], row["category"], delta, price, supplier, f_note.value.strip(), f_date.value.strip(), invoice, receipt)
                 else:
-                    # خروج - اگه موجودی کافی نبود، موجودی فرضی اضافه کن
                     delta = -qty
                     current = db.qty(row["name"])
                     if current + delta < 0:
-                        db.ensure_balance(row["name"], row["category"])
+                        snack("موجودی کافی نیست! ابتدا موجودی جاری را تنظیم کنید.", C_RED)
+                        return
                     ok = db.add_txn(row["name"], row["category"], delta, 0, "", f_note.value.strip(), f_date.value.strip(), "", "")
 
                 if not ok:
@@ -525,19 +578,17 @@ def main(page: ft.Page):
                 snack("ثبت شد ✓", C_GREEN)
                 qty_box.content.controls[1].value = str(db.qty(row["name"]))
                 f_qty.value = "1"
-                f_price.value = ""; f_supplier.value = ""
-                f_invoice.value = ""; f_receipt.value = ""; f_note.value = ""
+                f_price.value = ""
+                f_supplier.value = ""
+                f_invoice.value = ""
+                f_receipt.value = ""
+                f_note.value = ""
                 page.update()
 
-            # ساخت لیست کنترل‌های بدنه بر اساس نوع عملیات
             is_in = f_type.value == "ورود"
+            in_fields.visible = is_in
             body_controls = [
-                f_product, qty_box, f_type, f_qty,
-            ]
-            if is_in:
-                body_controls.append(in_fields)
-            body_controls += [
-                f_note, f_date,
+                f_product, qty_box, f_type, f_qty, in_fields, f_note, f_date,
                 ft.ElevatedButton("ثبت", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True),
             ]
 
@@ -546,9 +597,9 @@ def main(page: ft.Page):
                 ft.Container(padding=16, content=ft.Column(spacing=12, controls=body_controls)),
             ])
 
-        # ══════════════════════════════════════════
-        #  ویرایش تراکنش
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # ویرایش تراکنش
+        # ----------------------------------------------
         def show_edit_txn(txn_id, back_fn):
             row = db.get_txn(txn_id)
             if not row:
@@ -604,9 +655,9 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ══════════════════════════════════════════
-        #  گزارشات
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # گزارشات
+        # ----------------------------------------------
         def render_reports():
             nonlocal report_rows
             f_start    = ft.TextField(label="از تاریخ", hint_text="1403-01-01", expand=True, border_color=C_BLUE)
@@ -653,9 +704,9 @@ def main(page: ft.Page):
                     if not rows:
                         results.controls.append(ft.Text("نتیجه‌ای یافت نشد", color=C_GRAY, size=15))
                     else:
-                        total_in  = sum(r["delta"] for r in rows if r["delta"] > 0 and r["note"] != "موجودی فرضی (راه‌اندازی)")
+                        total_in  = sum(r["delta"] for r in rows if r["delta"] > 0)
                         total_out = sum(abs(r["delta"]) for r in rows if r["delta"] < 0)
-                        total_val = sum(abs(r["delta"])*r["price"] for r in rows if r["delta"] > 0 and r["note"] != "موجودی فرضی (راه‌اندازی)")
+                        total_val = sum(abs(r["delta"])*r["price"] for r in rows if r["delta"] > 0)
                         results.controls.append(ft.Container(border_radius=10, bgcolor="#EFF6FF", padding=12,
                             content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                 ft.Column(spacing=2, controls=[ft.Text("ورود", size=11, color=C_GRAY), ft.Text(str(total_in), size=15, weight=ft.FontWeight.BOLD, color=C_GREEN)]),
@@ -672,7 +723,7 @@ def main(page: ft.Page):
                             if r["supplier"]: info.append("فروشنده: "+r["supplier"])
                             if r["invoice_no"]: info.append("فاکتور: "+r["invoice_no"])
                             if r["receipt_no"]: info.append("رسید: "+r["receipt_no"])
-                            if r["note"] and r["note"] != "موجودی فرضی (راه‌اندازی)": info.append(r["note"])
+                            if r["note"]: info.append(r["note"])
                             results.controls.append(ft.Container(border_radius=10, bgcolor=C_WHITE, padding=12,
                                 content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                     ft.Column(spacing=3, expand=True, controls=[
@@ -745,13 +796,12 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    # ذخیره در پوشهٔ exports (امن و تضمینی)
                     exports_dir = db._db_dir / "exports"
                     exports_dir.mkdir(parents=True, exist_ok=True)
                     fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
                     path = exports_dir / fname
                     db.export_csv(report_rows, path)
-                    snack("CSV ذخیره شد ✓\n" + str(path), C_GREEN)
+                    snack(f"CSV ذخیره شد ✓\nمسیر: {path}", C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -766,7 +816,7 @@ def main(page: ft.Page):
                     fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
                     path = exports_dir / fname
                     db.export_txt(report_rows, path)
-                    snack("گزارش متنی ذخیره شد ✓\n" + str(path), C_GREEN)
+                    snack(f"گزارش متنی ذخیره شد ✓\nمسیر: {path}", C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -787,16 +837,16 @@ def main(page: ft.Page):
                 ft.Container(padding=12, content=results),
             ])
 
-        # ══════════════════════════════════════════
-        #  پشتیبان‌گیری
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # پشتیبان‌گیری
+        # ----------------------------------------------
         def show_backup():
             backups = db.list_backups()
 
             def do_backup(e):
                 try:
                     path = db.manual_backup()
-                    snack("بکاپ ذخیره شد ✓\n" + path, C_GREEN)
+                    snack(f"بکاپ ذخیره شد ✓\nمسیر: {path}", C_GREEN)
                     show_backup()
                 except Exception as ex:
                     snack("خطا: "+str(ex), C_RED)
@@ -813,7 +863,6 @@ def main(page: ft.Page):
                 if not os.path.exists(exports_dir):
                     os.makedirs(exports_dir, exist_ok=True)
                 try:
-                    # باز کردن پوشه با فایل‌منیجر گوشی
                     os.system(f'am start -a android.intent.action.VIEW -d "file://{exports_dir}"')
                 except:
                     snack("مسیر: " + exports_dir, C_BLUE)
@@ -854,9 +903,9 @@ def main(page: ft.Page):
                 ft.Container(padding=16, content=ft.Column(spacing=10, controls=items)),
             ])
 
-        # ══════════════════════════════════════════
-        #  نوار تب
-        # ══════════════════════════════════════════
+        # ----------------------------------------------
+        # نوار تب
+        # ----------------------------------------------
         tab_bar_row = ft.Row(spacing=0)
 
         def refresh_tabs():
