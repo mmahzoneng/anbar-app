@@ -233,13 +233,22 @@ class DB:
                 f.write("\n")
 
     def manual_backup(self):
-        dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
-        dl = Path(dl)
-        dl.mkdir(parents=True, exist_ok=True)
+        # ۱- ذخیره در پوشهٔ امن exports (کنار دیتابیس)
+        exports_dir = self._db_dir / "exports"
+        exports_dir.mkdir(parents=True, exist_ok=True)
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
-        shutil.copy2(self.path, dl / name)
+        shutil.copy2(self.path, exports_dir / name)
+        # ۲- ذخیره در پوشهٔ مخصوص بکاپ
         shutil.copy2(self.path, self.backup_dir / name)
-        return str(dl / name)
+        # ۳- تلاش برای ذخیره در Downloads (اگر نشد، فقط بی‌خیال شو)
+        try:
+            dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads")
+            dl = Path(dl)
+            dl.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.path, dl / name)
+        except:
+            pass
+        return str(exports_dir / name)
 
     def list_backups(self):
         return [str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)]
@@ -264,7 +273,7 @@ CATS    = ["ساختمانی", "آشپزخانه"]
 
 def main(page: ft.Page):
     try:
-        page.title = "انبار حرفه‌ای"
+        page.title = "انبار فاز7"
         page.rtl = True
         page.theme_mode = ft.ThemeMode.LIGHT
         page.bgcolor = BG
@@ -459,7 +468,7 @@ def main(page: ft.Page):
             f_supplier = ft.TextField(label="نام فروشنده / مصالح‌فروش", border_color=C_BLUE)
             f_invoice  = ft.TextField(label="شماره فاکتور", border_color=C_BLUE)
             f_receipt  = ft.TextField(label="شماره رسید انبار (اختیاری)", border_color=C_BLUE)
-            in_fields  = ft.Column(spacing=12, visible=True, controls=[f_price, f_supplier, f_invoice, f_receipt])
+            in_fields  = ft.Column(spacing=12, controls=[f_price, f_supplier, f_invoice, f_receipt])
 
             qty_box = ft.Container(border_radius=10, bgcolor=C_BLUE+"15", padding=12,
                 content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
@@ -472,9 +481,8 @@ def main(page: ft.Page):
                 page.update()
 
             def on_type_change(e):
-                in_fields.visible = (f_type.value == "ورود")
-                in_fields.update()
-                page.update()
+                # به‌جای مخفی کردن، خود set_body دوباره صدا زده می‌شه
+                render_txn()
 
             f_product.on_change = on_product_change
             f_type.on_change = on_type_change
@@ -521,14 +529,21 @@ def main(page: ft.Page):
                 f_invoice.value = ""; f_receipt.value = ""; f_note.value = ""
                 page.update()
 
+            # ساخت لیست کنترل‌های بدنه بر اساس نوع عملیات
+            is_in = f_type.value == "ورود"
+            body_controls = [
+                f_product, qty_box, f_type, f_qty,
+            ]
+            if is_in:
+                body_controls.append(in_fields)
+            body_controls += [
+                f_note, f_date,
+                ft.ElevatedButton("ثبت", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True),
+            ]
+
             set_body([
                 page_header("ورود / خروج کالا"),
-                ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
-                    f_product, qty_box, f_type, f_qty,
-                    in_fields,
-                    f_note, f_date,
-                    ft.ElevatedButton("ثبت", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True),
-                ])),
+                ft.Container(padding=16, content=ft.Column(spacing=12, controls=body_controls)),
             ])
 
         # ══════════════════════════════════════════
@@ -730,13 +745,15 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    dl = Path(os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads"))
-                    dl.mkdir(parents=True, exist_ok=True)
-                    fname = "anbar_"+jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M")+".csv"
-                    db.export_csv(report_rows, dl/fname)
-                    snack("CSV ذخیره شد ✓", C_GREEN)
+                    # ذخیره در پوشهٔ exports (امن و تضمینی)
+                    exports_dir = db._db_dir / "exports"
+                    exports_dir.mkdir(parents=True, exist_ok=True)
+                    fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
+                    path = exports_dir / fname
+                    db.export_csv(report_rows, path)
+                    snack("CSV ذخیره شد ✓\n" + str(path), C_GREEN)
                 except Exception as ex:
-                    snack("خطا: "+str(ex), C_RED)
+                    snack("خطا: " + str(ex), C_RED)
 
             def export_txt(e):
                 nonlocal report_rows
@@ -744,13 +761,14 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    dl = Path(os.getenv("FLET_APP_STORAGE_DOWNLOADS") or os.path.expanduser("~/Downloads"))
-                    dl.mkdir(parents=True, exist_ok=True)
-                    fname = "gozaresh_"+jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M")+".txt"
-                    db.export_txt(report_rows, dl/fname)
-                    snack("گزارش متنی ذخیره شد ✓", C_GREEN)
+                    exports_dir = db._db_dir / "exports"
+                    exports_dir.mkdir(parents=True, exist_ok=True)
+                    fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
+                    path = exports_dir / fname
+                    db.export_txt(report_rows, path)
+                    snack("گزارش متنی ذخیره شد ✓\n" + str(path), C_GREEN)
                 except Exception as ex:
-                    snack("خطا: "+str(ex), C_RED)
+                    snack("خطا: " + str(ex), C_RED)
 
             set_body([
                 page_header("گزارشات"),
@@ -777,8 +795,8 @@ def main(page: ft.Page):
 
             def do_backup(e):
                 try:
-                    db.manual_backup()
-                    snack("بکاپ در Downloads ذخیره شد ✓", C_GREEN)
+                    path = db.manual_backup()
+                    snack("بکاپ ذخیره شد ✓\n" + path, C_GREEN)
                     show_backup()
                 except Exception as ex:
                     snack("خطا: "+str(ex), C_RED)
@@ -790,15 +808,27 @@ def main(page: ft.Page):
                 except Exception as ex:
                     snack("خطا: "+str(ex), C_RED)
 
+            def open_exports_folder(e):
+                exports_dir = str(db._db_dir / "exports")
+                if not os.path.exists(exports_dir):
+                    os.makedirs(exports_dir, exist_ok=True)
+                try:
+                    # باز کردن پوشه با فایل‌منیجر گوشی
+                    os.system(f'am start -a android.intent.action.VIEW -d "file://{exports_dir}"')
+                except:
+                    snack("مسیر: " + exports_dir, C_BLUE)
+
             items = [
                 ft.Container(border_radius=12, bgcolor="#EFF6FF", padding=14,
                     content=ft.Column(spacing=6, controls=[
                         ft.Row(spacing=8, controls=[ft.Icon(ft.Icons.INFO_OUTLINE, color=C_BLUE, size=18), ft.Text("پشتیبان‌گیری", size=14, weight=ft.FontWeight.BOLD, color=C_BLUE)]),
                         ft.Text("بکاپ خودکار: هر روز یک بار (۷ روز اخیر)", size=12, color=C_GRAY),
-                        ft.Text("بکاپ دستی: در پوشه Downloads ذخیره می‌شود", size=12, color=C_GRAY),
+                        ft.Text("بکاپ دستی: در پوشه exports ذخیره می‌شود", size=12, color=C_GRAY),
                     ])),
                 ft.Container(height=8),
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
+                ft.Container(height=4),
+                ft.ElevatedButton("📂  خروجی‌ها", on_click=open_exports_folder, bgcolor=C_WHITE, color=C_BLUE, height=44, expand=True),
                 ft.Container(height=8),
                 ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
