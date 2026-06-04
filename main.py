@@ -29,32 +29,6 @@ sys.excepthook = lambda t,v,tb: log_error("".join(traceback.format_exception(t,v
 DUMMY_QTY = 100000
 
 
-def get_save_dir():
-    """بهترین مسیر ممکن برای ذخیره فایل"""
-    dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS")
-    if dl:
-        p = Path(dl)
-        try:
-            p.mkdir(parents=True, exist_ok=True)
-            test = p / ".test"
-            test.write_text("test")
-            test.unlink()
-            return p
-        except: pass
-
-    data = os.getenv("FLET_APP_STORAGE_DATA")
-    if data:
-        p = Path(data) / "exports"
-        try:
-            p.mkdir(parents=True, exist_ok=True)
-            return p
-        except: pass
-
-    p = Path.home() / "Downloads"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-
 class DB:
     def __init__(self):
         storage = os.getenv("FLET_APP_STORAGE_DATA")
@@ -262,14 +236,14 @@ class DB:
                 if r["note"]: f.write("  یادداشت: "+r["note"]+"\n")
                 f.write("\n")
 
-    def manual_backup(self):
+    def manual_backup(self, save_dir=None):
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
         dest = self.backup_dir / name
         shutil.copy2(self.path, dest)
-        try:
-            save_dir = get_save_dir()
-            shutil.copy2(self.path, save_dir / name)
-        except: pass
+        if save_dir:
+            try:
+                shutil.copy2(self.path, Path(save_dir) / name)
+            except: pass
         return str(dest)
 
     def get_latest_backup(self):
@@ -310,6 +284,9 @@ def main(page: ft.Page):
         active_tab = [0]
         report_rows = []
         body = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
+
+        # مسیر ذخیره‌سازی که کاربر انتخاب می‌کنه
+        user_save_path = [None]
 
         def snack(msg, color=C_BLUE):
             page.snack_bar = ft.SnackBar(ft.Text(msg, color="white"), bgcolor=color, duration=4000)
@@ -747,25 +724,19 @@ def main(page: ft.Page):
                                 ])))
                 page.update()
 
-            def share_file(path):
-                try:
-                    page.launch_url("file://" + path)
-                except Exception as ex:
-                    snack("مسیر فایل:\n" + path, C_BLUE)
-
             def export_csv(e):
                 nonlocal report_rows
                 if not report_rows:
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
+                save_dir = user_save_path[0] or (db._db_dir / "exports")
+                save_dir = Path(save_dir)
+                save_dir.mkdir(parents=True, exist_ok=True)
                 try:
-                    exports = db._db_dir / "exports"
-                    exports.mkdir(exist_ok=True)
                     fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
-                    path = exports / fname
+                    path = save_dir / fname
                     db.export_csv(report_rows, path)
-                    share_file(str(path))
-                    snack("CSV آماده شد ✓", C_GREEN)
+                    snack("CSV ذخیره شد ✓\n" + str(path), C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -774,14 +745,14 @@ def main(page: ft.Page):
                 if not report_rows:
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
+                save_dir = user_save_path[0] or (db._db_dir / "exports")
+                save_dir = Path(save_dir)
+                save_dir.mkdir(parents=True, exist_ok=True)
                 try:
-                    exports = db._db_dir / "exports"
-                    exports.mkdir(exist_ok=True)
                     fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
-                    path = exports / fname
+                    path = save_dir / fname
                     db.export_txt(report_rows, path)
-                    share_file(str(path))
-                    snack("گزارش آماده شد ✓", C_GREEN)
+                    snack("گزارش آماده شد ✓\n" + str(path), C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -802,30 +773,17 @@ def main(page: ft.Page):
                 ft.Container(padding=12, content=results),
             ])
 
-        def share_file(path):
-            try:
-                page.launch_url("file://" + path)
-            except Exception as ex:
-                snack("مسیر فایل:\n" + path, C_BLUE)
-
         def show_backup():
             backups = db.list_backups()
-            save_dir = get_save_dir()
+            current_save_path = user_save_path[0] or str(db._db_dir / "exports")
 
             def do_backup(e):
                 try:
-                    path = db.manual_backup()
+                    path = db.manual_backup(user_save_path[0])
                     snack("بکاپ ذخیره شد ✓", C_GREEN)
                     show_backup()
                 except Exception as ex:
                     snack("خطا: "+str(ex), C_RED)
-
-            def do_share_backup(e):
-                path = db.get_latest_backup()
-                if path:
-                    share_file(path)
-                else:
-                    snack("ابتدا بکاپ بگیرید", C_YELLOW)
 
             def do_restore(path):
                 try:
@@ -834,17 +792,27 @@ def main(page: ft.Page):
                 except Exception as ex:
                     snack("خطا: "+str(ex), C_RED)
 
+            def pick_save_path(e):
+                def on_path_selected(result: ft.FilePickerResultEvent):
+                    if result.path:
+                        user_save_path[0] = result.path
+                        snack("مسیر ذخیره تنظیم شد:\n" + result.path, C_GREEN)
+                        show_backup()
+                file_picker = ft.FilePicker(on_result=on_path_selected)
+                page.overlay.append(file_picker)
+                page.update()
+                file_picker.get_directory_path()
+
             items = [
                 ft.Container(border_radius=12, bgcolor="#EFF6FF", padding=14,
                     content=ft.Column(spacing=6, controls=[
                         ft.Row(spacing=8, controls=[ft.Icon(ft.Icons.INFO_OUTLINE, color=C_BLUE, size=18), ft.Text("پشتیبان‌گیری", size=14, weight=ft.FontWeight.BOLD, color=C_BLUE)]),
                         ft.Text("بکاپ خودکار: هر روز یک بار (۷ روز اخیر)", size=12, color=C_GRAY),
-                        ft.Text("مسیر ذخیره: " + str(save_dir), size=11, color=C_GRAY),
+                        ft.Text("مسیر فعلی: " + current_save_path, size=11, color=C_BLUE),
                     ])),
                 ft.Container(height=8),
+                ft.ElevatedButton("📂 تنظیم مسیر خروجی", on_click=pick_save_path, bgcolor=C_WHITE, color=C_BLUE, height=44, expand=True),
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
-                ft.Container(height=4),
-                ft.ElevatedButton("📤  اشتراک‌گذاری بکاپ", on_click=do_share_backup, bgcolor=C_WHITE, color=C_BLUE, height=44, expand=True),
                 ft.Container(height=8),
                 ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
