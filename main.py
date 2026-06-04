@@ -28,36 +28,19 @@ sys.excepthook = lambda t,v,tb: log_error("".join(traceback.format_exception(t,v
 
 DUMMY_QTY = 100000
 
-
-def get_save_dir():
-    """بهترین مسیر ممکن برای ذخیره فایل"""
-    # اول FLET_APP_STORAGE_DOWNLOADS رو امتحان کن
-    dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS")
-    if dl:
-        p = Path(dl)
-        try:
-            p.mkdir(parents=True, exist_ok=True)
-            # تست نوشتن
-            test = p / ".test"
-            test.write_text("test")
-            test.unlink()
-            return p
-        except: pass
-
-    # بعد FLET_APP_STORAGE_DATA رو امتحان کن
-    data = os.getenv("FLET_APP_STORAGE_DATA")
-    if data:
-        p = Path(data) / "exports"
-        try:
-            p.mkdir(parents=True, exist_ok=True)
-            return p
-        except: pass
-
-    # آخرین گزینه
-    p = Path.home() / "Downloads"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
+# ═══════════════ تنظیم فونت فارسی (اختیاری) ═══════════════
+try:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    ASSETS_DIR = Path(__file__).parent / "assets"
+    FONT_PATH = ASSETS_DIR / "Vazirmatn.ttf"
+    if FONT_PATH.exists():
+        pdfmetrics.registerFont(TTFont("PersianFont", str(FONT_PATH)))
+        REPORT_FONT = "PersianFont"
+    else:
+        REPORT_FONT = "Helvetica"
+except:
+    REPORT_FONT = "Helvetica"
 
 class DB:
     def __init__(self):
@@ -267,15 +250,9 @@ class DB:
                 f.write("\n")
 
     def manual_backup(self):
-        # همیشه توی پوشه داخلی برنامه ذخیره کن
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
         dest = self.backup_dir / name
         shutil.copy2(self.path, dest)
-        # تلاش برای ذخیره در Downloads هم
-        try:
-            save_dir = get_save_dir()
-            shutil.copy2(self.path, save_dir / name)
-        except: pass
         return str(dest)
 
     def get_latest_backup(self):
@@ -317,9 +294,54 @@ def main(page: ft.Page):
         report_rows = []
         body = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
 
-        def snack(msg, color=C_BLUE):
-            page.snack_bar = ft.SnackBar(ft.Text(msg, color="white"), bgcolor=color, duration=4000)
-            page.snack_bar.open = True
+        # تابع نمایش محتوای فایل در یک Dialog
+        def show_file_viewer(title, file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception as ex:
+                content = f"خطا در خواندن فایل:\n{ex}"
+
+            viewer_dlg = ft.AlertDialog(
+                title=ft.Text(title, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    height=400,
+                    content=ft.Column([
+                        ft.TextField(
+                            value=content,
+                            multiline=True,
+                            read_only=True,
+                            min_lines=10,
+                            max_lines=20,
+                            text_style=ft.TextStyle(size=12, font_family="monospace"),
+                            bgcolor=C_LIGHT,
+                            border_color=C_GRAY,
+                        )
+                    ], scroll=ft.ScrollMode.AUTO)
+                ),
+                actions=[
+                    ft.TextButton("بستن", on_click=lambda e: close_dlg(viewer_dlg)),
+                ],
+            )
+            page.dialog = viewer_dlg
+            viewer_dlg.open = True
+            page.update()
+
+        def close_dlg(dlg):
+            dlg.open = False
+            page.update()
+
+        def show_dialog(title, message, color=C_BLUE):
+            def close_dlg(e=None):
+                dlg.open = False
+                page.update()
+            dlg = ft.AlertDialog(
+                title=ft.Text(title, weight=ft.FontWeight.BOLD, color=color),
+                content=ft.Text(message, selectable=True),
+                actions=[ft.TextButton("باشه", on_click=close_dlg)],
+            )
+            page.dialog = dlg
+            dlg.open = True
             page.update()
 
         def set_body(controls):
@@ -392,7 +414,7 @@ def main(page: ft.Page):
                     def on_edit(e, row=r): show_product_form(row)
                     def on_del(e, n=r["name"]):
                         db.delete_product(n)
-                        snack(n + " حذف شد", C_RED)
+                        show_dialog("حذف", n + " حذف شد", C_RED)
                         render_products()
                     controls.append(ft.Container(margin=10, border_radius=14, bgcolor=C_WHITE, padding=14,
                         content=ft.Column(spacing=10, controls=[
@@ -441,22 +463,22 @@ def main(page: ft.Page):
             def save(e):
                 name = f_name.value.strip()
                 if not name:
-                    snack("نام کالا را وارد کنید", C_RED)
+                    show_dialog("خطا", "نام کالا را وارد کنید", C_RED)
                     return
                 try:
                     min_qty = float(f_min.value or 0)
                 except ValueError:
-                    snack("حداقل موجودی باید عدد باشد", C_RED)
+                    show_dialog("خطا", "حداقل موجودی باید عدد باشد", C_RED)
                     return
                 try:
                     if is_edit:
                         db.update_product(row["id"], name, f_unit.value.strip(), f_cat.value, min_qty, f_note.value.strip())
-                        snack(name + " ویرایش شد", C_GREEN)
+                        show_dialog("موفق", name + " ویرایش شد", C_GREEN)
                     else:
                         db.add_product(name, f_unit.value.strip(), f_cat.value, min_qty, f_note.value.strip())
-                        snack(name + " اضافه شد", C_GREEN)
+                        show_dialog("موفق", name + " اضافه شد", C_GREEN)
                 except sqlite3.IntegrityError:
-                    snack("این نام قبلاً ثبت شده است", C_RED)
+                    show_dialog("خطا", "این نام قبلاً ثبت شده است", C_RED)
                     return
                 render_products()
 
@@ -519,17 +541,17 @@ def main(page: ft.Page):
                 try:
                     qty = float(f_qty.value or 0)
                 except ValueError:
-                    snack("تعداد نادرست است", C_RED)
+                    show_dialog("خطا", "تعداد نادرست است", C_RED)
                     return
                 if qty <= 0:
-                    snack("تعداد باید بزرگتر از صفر باشد", C_YELLOW)
+                    show_dialog("خطا", "تعداد باید بزرگتر از صفر باشد", C_YELLOW)
                     return
 
                 row = prod_map[f_product.value]
                 if is_in:
                     try: price = float(f_price.value or 0)
                     except ValueError:
-                        snack("قیمت نادرست است", C_RED)
+                        show_dialog("خطا", "قیمت نادرست است", C_RED)
                         return
                     ok = db.add_txn(row["name"], row["category"], qty, price,
                         f_supplier.value.strip(), f_note.value.strip(),
@@ -541,9 +563,9 @@ def main(page: ft.Page):
                     ok = db.add_txn(row["name"], row["category"], -qty, 0, "", f_note.value.strip(), f_date.value.strip(), "", "")
 
                 if not ok:
-                    snack("خطا در ثبت!", C_RED)
+                    show_dialog("خطا", "خطا در ثبت!", C_RED)
                     return
-                snack("ثبت شد ✓", C_GREEN)
+                show_dialog("موفق", "ثبت شد ✓", C_GREEN)
                 qty_box.content.controls[1].value = str(db.qty(row["name"]))
                 f_qty.value = "1"; f_note.value = ""
                 if is_in:
@@ -565,7 +587,7 @@ def main(page: ft.Page):
         def show_edit_txn(txn_id, back_fn):
             row = db.get_txn(txn_id)
             if not row:
-                snack("تراکنش پیدا نشد", C_RED)
+                show_dialog("خطا", "تراکنش پیدا نشد", C_RED)
                 return
             is_in = row["delta"] > 0
             f_qty     = ft.TextField(label="تعداد", value=str(abs(row["delta"])), keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
@@ -581,10 +603,10 @@ def main(page: ft.Page):
                     qty = float(f_qty.value or 0)
                     price = float(f_price.value or 0) if is_in else 0
                 except ValueError:
-                    snack("مقادیر نادرست است", C_RED)
+                    show_dialog("خطا", "مقادیر نادرست است", C_RED)
                     return
                 if qty <= 0:
-                    snack("تعداد باید بزرگتر از صفر باشد", C_YELLOW)
+                    show_dialog("خطا", "تعداد باید بزرگتر از صفر باشد", C_YELLOW)
                     return
                 ok = db.update_txn(txn_id, is_in, qty, price,
                     f_supplier.value.strip() if is_in else "",
@@ -592,14 +614,14 @@ def main(page: ft.Page):
                     f_invoice.value.strip() if is_in else "",
                     f_receipt.value.strip() if is_in else "")
                 if not ok:
-                    snack("موجودی کافی نیست!", C_RED)
+                    show_dialog("خطا", "موجودی کافی نیست!", C_RED)
                     return
-                snack("ویرایش شد ✓", C_GREEN)
+                show_dialog("موفق", "ویرایش شد ✓", C_GREEN)
                 back_fn()
 
             def delete(e):
                 db.delete_txn(txn_id)
-                snack("تراکنش حذف شد", C_RED)
+                show_dialog("حذف", "تراکنش حذف شد", C_RED)
                 back_fn()
 
             set_body([
@@ -756,34 +778,32 @@ def main(page: ft.Page):
             def export_csv(e):
                 nonlocal report_rows
                 if not report_rows:
-                    snack("ابتدا جستجو کنید", C_YELLOW)
+                    show_dialog("خطا", "ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
                     exports = db._db_dir / "exports"
                     exports.mkdir(exist_ok=True)
                     fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
-                    path = exports / fname
+                    path = str(exports / fname)
                     db.export_csv(report_rows, path)
-                    share_file(str(path))
-                    snack("CSV آماده شد ✓", C_GREEN)
+                    show_file_viewer("پیش‌نمایش CSV", path)
                 except Exception as ex:
-                    snack("خطا: " + str(ex), C_RED)
+                    show_dialog("خطا", str(ex), C_RED)
 
             def export_txt(e):
                 nonlocal report_rows
                 if not report_rows:
-                    snack("ابتدا جستجو کنید", C_YELLOW)
+                    show_dialog("خطا", "ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
                     exports = db._db_dir / "exports"
                     exports.mkdir(exist_ok=True)
                     fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
-                    path = exports / fname
+                    path = str(exports / fname)
                     db.export_txt(report_rows, path)
-                    share_file(str(path))
-                    snack("گزارش آماده شد ✓", C_GREEN)
+                    show_file_viewer("پیش‌نمایش گزارش", path)
                 except Exception as ex:
-                    snack("خطا: " + str(ex), C_RED)
+                    show_dialog("خطا", str(ex), C_RED)
 
             set_body([
                 page_header("گزارشات"),
@@ -802,55 +822,33 @@ def main(page: ft.Page):
                 ft.Container(padding=12, content=results),
             ])
 
-        def share_file(path):
-            """share فایل با اندروید intent"""
-            try:
-                import subprocess
-                subprocess.Popen([
-                    "am", "start", "-a", "android.intent.action.SEND",
-                    "--eu", "android.intent.extra.STREAM", "file://" + path,
-                    "-t", "*/*", "--grant-read-uri-permission"
-                ])
-            except Exception as ex:
-                snack("مسیر فایل: " + path, C_BLUE)
-
         def show_backup():
             backups = db.list_backups()
-            save_dir = get_save_dir()
 
             def do_backup(e):
                 try:
                     path = db.manual_backup()
-                    snack("بکاپ ذخیره شد ✓", C_GREEN)
+                    # نمایش محتوای بکاپ؟ فقط مسیر رو نشون می‌دیم.
+                    show_dialog("بکاپ ذخیره شد", "مسیر فایل:\n" + path, C_GREEN)
                     show_backup()
                 except Exception as ex:
-                    snack("خطا: "+str(ex), C_RED)
-
-            def do_share_backup(e):
-                path = db.get_latest_backup()
-                if path:
-                    share_file(path)
-                else:
-                    snack("ابتدا بکاپ بگیرید", C_YELLOW)
+                    show_dialog("خطا", str(ex), C_RED)
 
             def do_restore(path):
                 try:
                     db.restore(path)
-                    snack("بازگردانی انجام شد — برنامه را ببندید و باز کنید", C_GREEN)
+                    show_dialog("موفق", "بازگردانی انجام شد — برنامه را ببندید و باز کنید", C_GREEN)
                 except Exception as ex:
-                    snack("خطا: "+str(ex), C_RED)
+                    show_dialog("خطا", str(ex), C_RED)
 
             items = [
                 ft.Container(border_radius=12, bgcolor="#EFF6FF", padding=14,
                     content=ft.Column(spacing=6, controls=[
                         ft.Row(spacing=8, controls=[ft.Icon(ft.Icons.INFO_OUTLINE, color=C_BLUE, size=18), ft.Text("پشتیبان‌گیری", size=14, weight=ft.FontWeight.BOLD, color=C_BLUE)]),
                         ft.Text("بکاپ خودکار: هر روز یک بار (۷ روز اخیر)", size=12, color=C_GRAY),
-                        ft.Text("مسیر ذخیره: " + str(save_dir), size=11, color=C_GRAY),
                     ])),
                 ft.Container(height=8),
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
-                ft.Container(height=4),
-                ft.ElevatedButton("📤  اشتراک‌گذاری بکاپ", on_click=do_share_backup, bgcolor=C_WHITE, color=C_BLUE, height=44, expand=True),
                 ft.Container(height=8),
                 ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
