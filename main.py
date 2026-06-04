@@ -31,20 +31,17 @@ DUMMY_QTY = 100000
 
 def get_save_dir():
     """بهترین مسیر ممکن برای ذخیره فایل"""
-    # اول FLET_APP_STORAGE_DOWNLOADS رو امتحان کن
     dl = os.getenv("FLET_APP_STORAGE_DOWNLOADS")
     if dl:
         p = Path(dl)
         try:
             p.mkdir(parents=True, exist_ok=True)
-            # تست نوشتن
             test = p / ".test"
             test.write_text("test")
             test.unlink()
             return p
         except: pass
 
-    # بعد FLET_APP_STORAGE_DATA رو امتحان کن
     data = os.getenv("FLET_APP_STORAGE_DATA")
     if data:
         p = Path(data) / "exports"
@@ -53,7 +50,6 @@ def get_save_dir():
             return p
         except: pass
 
-    # آخرین گزینه
     p = Path.home() / "Downloads"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -267,11 +263,9 @@ class DB:
                 f.write("\n")
 
     def manual_backup(self):
-        # همیشه توی پوشه داخلی برنامه ذخیره کن
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
         dest = self.backup_dir / name
         shutil.copy2(self.path, dest)
-        # تلاش برای ذخیره در Downloads هم
         try:
             save_dir = get_save_dir()
             shutil.copy2(self.path, save_dir / name)
@@ -753,6 +747,12 @@ def main(page: ft.Page):
                                 ])))
                 page.update()
 
+            def share_file(path):
+                try:
+                    page.launch_url("file://" + path)
+                except Exception as ex:
+                    snack("مسیر فایل:\n" + path, C_BLUE)
+
             def export_csv(e):
                 nonlocal report_rows
                 if not report_rows:
@@ -803,16 +803,10 @@ def main(page: ft.Page):
             ])
 
         def share_file(path):
-            """share فایل با اندروید intent"""
             try:
-                import subprocess
-                subprocess.Popen([
-                    "am", "start", "-a", "android.intent.action.SEND",
-                    "--eu", "android.intent.extra.STREAM", "file://" + path,
-                    "-t", "*/*", "--grant-read-uri-permission"
-                ])
+                page.launch_url("file://" + path)
             except Exception as ex:
-                snack("مسیر فایل: " + path, C_BLUE)
+                snack("مسیر فایل:\n" + path, C_BLUE)
 
         def show_backup():
             backups = db.list_backups()
