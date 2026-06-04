@@ -25,9 +25,7 @@ jobs:
 
       - name: Build APK (Non-interactive)
         run: |
-          yes | flet build apk --verbose \
-            --android-permissions WRITE_EXTERNAL_STORAGE \
-            --android-permissions READ_EXTERNAL_STORAGE
+          yes | flet build apk --verbose
 
       - name: Show build result
         run: ls -R build/ || echo "Build folder not found"
