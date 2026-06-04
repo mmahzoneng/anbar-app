@@ -267,11 +267,20 @@ class DB:
                 f.write("\n")
 
     def manual_backup(self):
-        save_dir = get_save_dir()
+        # همیشه توی پوشه داخلی برنامه ذخیره کن
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
-        shutil.copy2(self.path, save_dir / name)
-        shutil.copy2(self.path, self.backup_dir / name)
-        return str(save_dir / name)
+        dest = self.backup_dir / name
+        shutil.copy2(self.path, dest)
+        # تلاش برای ذخیره در Downloads هم
+        try:
+            save_dir = get_save_dir()
+            shutil.copy2(self.path, save_dir / name)
+        except: pass
+        return str(dest)
+
+    def get_latest_backup(self):
+        files = sorted(self.backup_dir.glob("*.db"), reverse=True)
+        return str(files[0]) if files else None
 
     def list_backups(self):
         return [str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)]
@@ -750,10 +759,13 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    save_dir = get_save_dir()
+                    exports = db._db_dir / "exports"
+                    exports.mkdir(exist_ok=True)
                     fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
-                    db.export_csv(report_rows, save_dir / fname)
-                    snack("CSV ذخیره شد ✓\n" + str(save_dir / fname), C_GREEN)
+                    path = exports / fname
+                    db.export_csv(report_rows, path)
+                    share_file(str(path))
+                    snack("CSV آماده شد ✓", C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -763,10 +775,13 @@ def main(page: ft.Page):
                     snack("ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    save_dir = get_save_dir()
+                    exports = db._db_dir / "exports"
+                    exports.mkdir(exist_ok=True)
                     fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
-                    db.export_txt(report_rows, save_dir / fname)
-                    snack("گزارش ذخیره شد ✓\n" + str(save_dir / fname), C_GREEN)
+                    path = exports / fname
+                    db.export_txt(report_rows, path)
+                    share_file(str(path))
+                    snack("گزارش آماده شد ✓", C_GREEN)
                 except Exception as ex:
                     snack("خطا: " + str(ex), C_RED)
 
@@ -787,6 +802,18 @@ def main(page: ft.Page):
                 ft.Container(padding=12, content=results),
             ])
 
+        def share_file(path):
+            """share فایل با اندروید intent"""
+            try:
+                import subprocess
+                subprocess.Popen([
+                    "am", "start", "-a", "android.intent.action.SEND",
+                    "--eu", "android.intent.extra.STREAM", "file://" + path,
+                    "-t", "*/*", "--grant-read-uri-permission"
+                ])
+            except Exception as ex:
+                snack("مسیر فایل: " + path, C_BLUE)
+
         def show_backup():
             backups = db.list_backups()
             save_dir = get_save_dir()
@@ -794,10 +821,17 @@ def main(page: ft.Page):
             def do_backup(e):
                 try:
                     path = db.manual_backup()
-                    snack("بکاپ ذخیره شد ✓\n" + path, C_GREEN)
+                    snack("بکاپ ذخیره شد ✓", C_GREEN)
                     show_backup()
                 except Exception as ex:
                     snack("خطا: "+str(ex), C_RED)
+
+            def do_share_backup(e):
+                path = db.get_latest_backup()
+                if path:
+                    share_file(path)
+                else:
+                    snack("ابتدا بکاپ بگیرید", C_YELLOW)
 
             def do_restore(path):
                 try:
@@ -815,6 +849,8 @@ def main(page: ft.Page):
                     ])),
                 ft.Container(height=8),
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
+                ft.Container(height=4),
+                ft.ElevatedButton("📤  اشتراک‌گذاری بکاپ", on_click=do_share_backup, bgcolor=C_WHITE, color=C_BLUE, height=44, expand=True),
                 ft.Container(height=8),
                 ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
