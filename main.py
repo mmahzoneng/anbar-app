@@ -28,18 +28,6 @@ sys.excepthook = lambda t,v,tb: log_error("".join(traceback.format_exception(t,v
 
 DUMMY_QTY = 100000
 
-try:
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    ASSETS_DIR = Path(__file__).parent / "assets"
-    FONT_PATH = ASSETS_DIR / "Vazirmatn.ttf"
-    if FONT_PATH.exists():
-        pdfmetrics.registerFont(TTFont("PersianFont", str(FONT_PATH)))
-        REPORT_FONT = "PersianFont"
-    else:
-        REPORT_FONT = "Helvetica"
-except:
-    REPORT_FONT = "Helvetica"
 
 class DB:
     def __init__(self):
@@ -170,8 +158,7 @@ class DB:
             c.execute("DELETE FROM txns WHERE id=?", (txn_id,))
 
     def search_txns(self, start="", end="", keyword="", supplier_kw="", txn_type="همه", category="همه", invoice_kw="", receipt_kw=""):
-        conds, params = [], []
-        conds.append("note != 'موجودی فرضی'")
+        conds, params = ["note != 'موجودی فرضی'"], []
         if start and end: conds.append("jdate BETWEEN ? AND ?"); params += [start, end]
         if keyword: conds.append("product_name LIKE ?"); params.append("%"+keyword+"%")
         if supplier_kw: conds.append("supplier LIKE ?"); params.append("%"+supplier_kw+"%")
@@ -218,45 +205,50 @@ class DB:
                     if last: total += r["qty"] * last["price"]
         return total
 
-    def export_csv(self, rows, path):
-        with open(str(path), "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow(["تاریخ", "کالا", "دسته", "نوع", "تعداد", "قیمت واحد", "ارزش", "موجودی", "فروشنده", "فاکتور", "رسید", "یادداشت"])
-            for r in rows:
-                typ = "ورود" if r["delta"] > 0 else "خروج"
-                w.writerow([r["jdate"], r["product_name"], r["category"], typ, abs(r["delta"]), r["price"],
-                    abs(r["delta"])*r["price"], r["balance"], r["supplier"], r["invoice_no"], r["receipt_no"], r["note"]])
+    def build_txt(self, rows):
+        """متن گزارش رو برمیگردونه"""
+        lines = []
+        lines.append("گزارش انبار فاز ۷")
+        lines.append("تاریخ: " + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M"))
+        lines.append("="*40)
+        total_in  = sum(r["delta"] for r in rows if r["delta"] > 0)
+        total_out = sum(abs(r["delta"]) for r in rows if r["delta"] < 0)
+        total_val = sum(abs(r["delta"])*r["price"] for r in rows if r["delta"] > 0)
+        lines.append("جمع ورود: " + str(total_in))
+        lines.append("جمع خروج: " + str(total_out))
+        lines.append("ارزش ورودی: " + "{:,.0f}".format(total_val) + " تومان")
+        lines.append("تعداد تراکنش: " + str(len(rows)))
+        lines.append("="*40)
+        for r in rows:
+            typ = "ورود" if r["delta"] > 0 else "خروج"
+            lines.append(r["jdate"] + " | " + r["product_name"] + " | " + typ + ": " + str(abs(r["delta"])))
+            if r["delta"] > 0:
+                if r["supplier"]: lines.append("  فروشنده: " + r["supplier"])
+                if r["invoice_no"]: lines.append("  فاکتور: " + r["invoice_no"])
+                if r["receipt_no"]: lines.append("  رسید: " + r["receipt_no"])
+                lines.append("  ارزش: " + "{:,.0f}".format(abs(r["delta"])*r["price"]) + " تومان")
+            if r["note"]: lines.append("  یادداشت: " + r["note"])
+            lines.append("")
+        return "\n".join(lines)
 
-    def export_txt(self, rows, path):
-        with open(str(path), "w", encoding="utf-8") as f:
-            f.write("گزارش انبار فاز ۷\n")
-            f.write("تاریخ چاپ: " + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M") + "\n")
-            f.write("="*50 + "\n\n")
-            total_in  = sum(r["delta"] for r in rows if r["delta"] > 0)
-            total_out = sum(abs(r["delta"]) for r in rows if r["delta"] < 0)
-            total_val = sum(abs(r["delta"])*r["price"] for r in rows if r["delta"] > 0)
-            f.write("خلاصه:\n  جمع ورود: "+str(total_in)+"\n  جمع خروج: "+str(total_out)+"\n")
-            f.write("  ارزش ورودی: "+"{:,.0f}".format(total_val)+" تومان\n  تعداد: "+str(len(rows))+"\n\n"+"="*50+"\n\n")
-            for r in rows:
-                typ = "ورود" if r["delta"] > 0 else "خروج"
-                f.write(r["jdate"]+" | "+r["product_name"]+" | "+typ+": "+str(abs(r["delta"]))+"\n")
-                if r["delta"] > 0:
-                    if r["supplier"]: f.write("  فروشنده: "+r["supplier"]+"\n")
-                    if r["invoice_no"]: f.write("  فاکتور: "+r["invoice_no"]+"\n")
-                    if r["receipt_no"]: f.write("  رسید: "+r["receipt_no"]+"\n")
-                    f.write("  ارزش: "+"{:,.0f}".format(abs(r["delta"])*r["price"])+" تومان\n")
-                if r["note"]: f.write("  یادداشت: "+r["note"]+"\n")
-                f.write("\n")
+    def build_csv_text(self, rows):
+        """متن CSV رو برمیگردونه"""
+        lines = ["تاریخ,کالا,دسته,نوع,تعداد,قیمت,ارزش,فروشنده,فاکتور,رسید"]
+        for r in rows:
+            typ = "ورود" if r["delta"] > 0 else "خروج"
+            lines.append(",".join([
+                r["jdate"], r["product_name"], r["category"], typ,
+                str(abs(r["delta"])), str(r["price"]),
+                str(abs(r["delta"])*r["price"]),
+                r["supplier"], r["invoice_no"], r["receipt_no"]
+            ]))
+        return "\n".join(lines)
 
     def manual_backup(self):
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
         dest = self.backup_dir / name
         shutil.copy2(self.path, dest)
         return str(dest)
-
-    def get_latest_backup(self):
-        files = sorted(self.backup_dir.glob("*.db"), reverse=True)
-        return str(files[0]) if files else None
 
     def list_backups(self):
         return [str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)]
@@ -293,65 +285,14 @@ def main(page: ft.Page):
         report_rows = []
         body = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
 
-        form_area = ft.Column()
-
-        def show_form(form_content):
-            form_area.controls.clear()
-            form_area.controls.append(form_content)
-            page.update()
-
-        def hide_form():
-            form_area.controls.clear()
-            page.update()
-
-        def show_file_viewer(title, file_path):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except Exception as ex:
-                content = f"خطا در خواندن فایل:\n{ex}"
-
-            form_content = ft.Container(
-                padding=15,
-                border=ft.border.all(1, C_BLUE),
-                border_radius=10,
-                content=ft.Column([
-                    ft.Text(title, size=18, weight=ft.FontWeight.BOLD),
-                    ft.Text("برای کپی، انگشتت رو روی متن نگه دار (Long Press)", size=12, color=C_GRAY, italic=True),
-                    ft.Divider(),
-                    ft.Container(
-                        bgcolor=C_LIGHT,
-                        border_radius=8,
-                        padding=10,
-                        content=ft.Text(
-                            value=content,
-                            size=12,
-                            font_family="monospace",
-                            selectable=True,
-                            scroll=True,
-                        ),
-                        expand=True,
-                        height=400,
-                    ),
-                    ft.Row([
-                        ft.ElevatedButton("بستن", on_click=lambda e: hide_form()),
-                    ])
-                ], tight=True, spacing=10)
-            )
-            show_form(form_content)
-
-        def close_dlg(dlg):
-            dlg.open = False
-            page.update()
-
         def show_dialog(title, message, color=C_BLUE):
-            def close_dlg(e=None):
+            def close(e=None):
                 dlg.open = False
                 page.update()
             dlg = ft.AlertDialog(
                 title=ft.Text(title, weight=ft.FontWeight.BOLD, color=color),
                 content=ft.Text(message, selectable=True),
-                actions=[ft.TextButton("باشه", on_click=close_dlg)],
+                actions=[ft.TextButton("باشه", on_click=close)],
             )
             page.dialog = dlg
             dlg.open = True
@@ -368,6 +309,28 @@ def main(page: ft.Page):
                 ctrls.append(ft.IconButton(ft.Icons.ARROW_BACK_IOS, icon_color=C_BLUE, icon_size=20, on_click=lambda e: back_fn()))
             ctrls.append(ft.Text(title, size=20, weight=ft.FontWeight.BOLD, color=C_DARK, expand=True))
             return ft.Container(bgcolor=C_WHITE, padding=12, content=ft.Row(controls=ctrls, spacing=4))
+
+        def show_text_page(title, content, back_fn):
+            """نمایش متن در یک صفحه جدید با دکمه بازگشت"""
+            set_body([
+                page_header(title, back_fn),
+                ft.Container(
+                    padding=12,
+                    content=ft.Column(spacing=10, controls=[
+                        ft.Container(
+                            border_radius=8,
+                            bgcolor=C_LIGHT,
+                            padding=12,
+                            content=ft.Text(
+                                content,
+                                size=12,
+                                selectable=True,
+                                font_family="monospace",
+                            ),
+                        ),
+                    ]),
+                ),
+            ])
 
         def render_products():
             rows = db.all_products()
@@ -523,9 +486,7 @@ def main(page: ft.Page):
             is_in = txn_type_state[0] == "ورود"
 
             f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0])
-            f_type    = ft.Dropdown(label="نوع عملیات",
-                options=[ft.dropdown.Option("ورود"), ft.dropdown.Option("خروج")],
-                value=txn_type_state[0])
+            f_type    = ft.Dropdown(label="نوع عملیات", options=[ft.dropdown.Option("ورود"), ft.dropdown.Option("خروج")], value=txn_type_state[0])
             f_qty     = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_note    = ft.TextField(label="یادداشت", border_color=C_BLUE)
             f_date    = ft.TextField(label="تاریخ (شمسی)", value=jdatetime.datetime.now().strftime("%Y-%m-%d"), border_color=C_BLUE)
@@ -559,38 +520,30 @@ def main(page: ft.Page):
                 if qty <= 0:
                     show_dialog("خطا", "تعداد باید بزرگتر از صفر باشد", C_YELLOW)
                     return
-
                 row = prod_map[f_product.value]
                 if is_in:
                     try: price = float(f_price.value or 0)
                     except ValueError:
                         show_dialog("خطا", "قیمت نادرست است", C_RED)
                         return
-                    ok = db.add_txn(row["name"], row["category"], qty, price,
-                        f_supplier.value.strip(), f_note.value.strip(),
-                        f_date.value.strip(), f_invoice.value.strip(), f_receipt.value.strip())
+                    ok = db.add_txn(row["name"], row["category"], qty, price, f_supplier.value.strip(), f_note.value.strip(), f_date.value.strip(), f_invoice.value.strip(), f_receipt.value.strip())
                 else:
-                    current = db.qty(row["name"])
-                    if current - qty < 0:
+                    if db.qty(row["name"]) - qty < 0:
                         db.ensure_balance(row["name"], row["category"])
                     ok = db.add_txn(row["name"], row["category"], -qty, 0, "", f_note.value.strip(), f_date.value.strip(), "", "")
-
                 if not ok:
                     show_dialog("خطا", "خطا در ثبت!", C_RED)
                     return
                 show_dialog("موفق", "ثبت شد ✓", C_GREEN)
                 qty_box.content.controls[1].value = str(db.qty(row["name"]))
                 f_qty.value = "1"; f_note.value = ""
-                if is_in:
-                    f_price.value = ""; f_supplier.value = ""
-                    f_invoice.value = ""; f_receipt.value = ""
+                if is_in: f_price.value = ""; f_supplier.value = ""; f_invoice.value = ""; f_receipt.value = ""
                 page.update()
 
             body_ctrls = [f_product, qty_box, f_type, f_qty]
             if is_in:
                 body_ctrls += [f_price, f_supplier, f_invoice, f_receipt]
-            body_ctrls += [f_note, f_date,
-                ft.ElevatedButton("ثبت", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True)]
+            body_ctrls += [f_note, f_date, ft.ElevatedButton("ثبت", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True)]
 
             set_body([
                 page_header("ورود / خروج کالا"),
@@ -693,8 +646,7 @@ def main(page: ft.Page):
                 results.controls.clear()
 
                 if tab == 0:
-                    rows = db.search_txns(start, end, f_product.value.strip(), f_supplier.value.strip(),
-                        f_type.value, f_cat.value, f_invoice.value.strip(), f_receipt.value.strip())
+                    rows = db.search_txns(start, end, f_product.value.strip(), f_supplier.value.strip(), f_type.value, f_cat.value, f_invoice.value.strip(), f_receipt.value.strip())
                     report_rows = list(rows)
                     if not rows:
                         results.controls.append(ft.Text("نتیجه‌ای یافت نشد", color=C_GRAY, size=15))
@@ -741,10 +693,7 @@ def main(page: ft.Page):
                         for r in rows:
                             results.controls.append(ft.Container(border_radius=10, bgcolor=C_WHITE, padding=12,
                                 content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                                    ft.Column(spacing=2, expand=True, controls=[
-                                        ft.Text(r["product_name"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
-                                        ft.Text(r["category"], size=11, color=C_GRAY),
-                                    ]),
+                                    ft.Column(spacing=2, expand=True, controls=[ft.Text(r["product_name"], size=14, weight=ft.FontWeight.BOLD, color=C_DARK), ft.Text(r["category"], size=11, color=C_GRAY)]),
                                     ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
                                         ft.Text("ورود: "+str(r["total_in"]), size=12, color=C_GREEN),
                                         ft.Text("خروج: "+str(r["total_out"]), size=12, color=C_RED),
@@ -794,12 +743,8 @@ def main(page: ft.Page):
                     show_dialog("خطا", "ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    exports = db._db_dir / "exports"
-                    exports.mkdir(exist_ok=True)
-                    fname = "anbar_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".csv"
-                    path = str(exports / fname)
-                    db.export_csv(report_rows, path)
-                    show_file_viewer("پیش‌نمایش CSV", path)
+                    content = db.build_csv_text(report_rows)
+                    show_text_page("گزارش CSV", content, render_reports)
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
 
@@ -809,12 +754,8 @@ def main(page: ft.Page):
                     show_dialog("خطا", "ابتدا جستجو کنید", C_YELLOW)
                     return
                 try:
-                    exports = db._db_dir / "exports"
-                    exports.mkdir(exist_ok=True)
-                    fname = "gozaresh_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".txt"
-                    path = str(exports / fname)
-                    db.export_txt(report_rows, path)
-                    show_file_viewer("پیش‌نمایش گزارش", path)
+                    content = db.build_txt(report_rows)
+                    show_text_page("گزارش متنی", content, render_reports)
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
 
@@ -841,7 +782,7 @@ def main(page: ft.Page):
             def do_backup(e):
                 try:
                     path = db.manual_backup()
-                    show_dialog("بکاپ ذخیره شد", "مسیر فایل:\n" + path, C_GREEN)
+                    show_dialog("بکاپ ذخیره شد ✓", "فایل در حافظه داخلی برنامه ذخیره شد.\n\nنام فایل:\n" + Path(path).name, C_GREEN)
                     show_backup()
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
@@ -858,6 +799,7 @@ def main(page: ft.Page):
                     content=ft.Column(spacing=6, controls=[
                         ft.Row(spacing=8, controls=[ft.Icon(ft.Icons.INFO_OUTLINE, color=C_BLUE, size=18), ft.Text("پشتیبان‌گیری", size=14, weight=ft.FontWeight.BOLD, color=C_BLUE)]),
                         ft.Text("بکاپ خودکار: هر روز یک بار (۷ روز اخیر)", size=12, color=C_GRAY),
+                        ft.Text("بکاپ دستی: در حافظه داخلی برنامه", size=12, color=C_GRAY),
                     ])),
                 ft.Container(height=8),
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
@@ -915,7 +857,6 @@ def main(page: ft.Page):
         page.add(ft.Column(expand=True, spacing=0, controls=[
             ft.Container(expand=True, content=body),
             ft.Container(bgcolor=C_WHITE, padding=4, content=tab_bar_row),
-            form_area,
         ]))
 
         refresh_tabs()
