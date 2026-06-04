@@ -28,7 +28,6 @@ sys.excepthook = lambda t,v,tb: log_error("".join(traceback.format_exception(t,v
 
 DUMMY_QTY = 100000
 
-# ═══════════════ تنظیم فونت فارسی (اختیاری) ═══════════════
 try:
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -294,7 +293,17 @@ def main(page: ft.Page):
         report_rows = []
         body = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
 
-        # تابع نمایش محتوای فایل در یک Dialog
+        form_area = ft.Column()
+
+        def show_form(form_content):
+            form_area.controls.clear()
+            form_area.controls.append(form_content)
+            page.update()
+
+        def hide_form():
+            form_area.controls.clear()
+            page.update()
+
         def show_file_viewer(title, file_path):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -302,30 +311,34 @@ def main(page: ft.Page):
             except Exception as ex:
                 content = f"خطا در خواندن فایل:\n{ex}"
 
-            viewer_dlg = ft.AlertDialog(
-                title=ft.Text(title, weight=ft.FontWeight.BOLD),
-                content=ft.Container(
-                    height=400,
-                    content=ft.Column([
-                        ft.TextField(
+            form_content = ft.Container(
+                padding=15,
+                border=ft.border.all(1, C_BLUE),
+                border_radius=10,
+                content=ft.Column([
+                    ft.Text(title, size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text("برای کپی، انگشتت رو روی متن نگه دار (Long Press)", size=12, color=C_GRAY, italic=True),
+                    ft.Divider(),
+                    ft.Container(
+                        bgcolor=C_LIGHT,
+                        border_radius=8,
+                        padding=10,
+                        content=ft.Text(
                             value=content,
-                            multiline=True,
-                            read_only=True,
-                            min_lines=10,
-                            max_lines=20,
-                            text_style=ft.TextStyle(size=12, font_family="monospace"),
-                            bgcolor=C_LIGHT,
-                            border_color=C_GRAY,
-                        )
-                    ], scroll=ft.ScrollMode.AUTO)
-                ),
-                actions=[
-                    ft.TextButton("بستن", on_click=lambda e: close_dlg(viewer_dlg)),
-                ],
+                            size=12,
+                            font_family="monospace",
+                            selectable=True,
+                            scroll=True,
+                        ),
+                        expand=True,
+                        height=400,
+                    ),
+                    ft.Row([
+                        ft.ElevatedButton("بستن", on_click=lambda e: hide_form()),
+                    ])
+                ], tight=True, spacing=10)
             )
-            page.dialog = viewer_dlg
-            viewer_dlg.open = True
-            page.update()
+            show_form(form_content)
 
         def close_dlg(dlg):
             dlg.open = False
@@ -828,7 +841,6 @@ def main(page: ft.Page):
             def do_backup(e):
                 try:
                     path = db.manual_backup()
-                    # نمایش محتوای بکاپ؟ فقط مسیر رو نشون می‌دیم.
                     show_dialog("بکاپ ذخیره شد", "مسیر فایل:\n" + path, C_GREEN)
                     show_backup()
                 except Exception as ex:
@@ -903,6 +915,7 @@ def main(page: ft.Page):
         page.add(ft.Column(expand=True, spacing=0, controls=[
             ft.Container(expand=True, content=body),
             ft.Container(bgcolor=C_WHITE, padding=4, content=tab_bar_row),
+            form_area,
         ]))
 
         refresh_tabs()
