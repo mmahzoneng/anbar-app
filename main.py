@@ -7,6 +7,8 @@ import shutil
 import csv
 import traceback
 import sys
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 def get_log_path():
@@ -206,19 +208,41 @@ class DB:
         return total
 
     def build_txt(self, rows):
-        """متن گزارش رو برمیگردونه"""
+        """متن گزارش رو برمیگردونه - هر کالا جداگانه"""
         lines = []
         lines.append("گزارش انبار فاز ۷")
         lines.append("تاریخ: " + jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M"))
         lines.append("="*40)
-        total_in  = sum(r["delta"] for r in rows if r["delta"] > 0)
-        total_out = sum(abs(r["delta"]) for r in rows if r["delta"] < 0)
-        total_val = sum(abs(r["delta"])*r["price"] for r in rows if r["delta"] > 0)
-        lines.append("جمع ورود: " + str(total_in))
-        lines.append("جمع خروج: " + str(total_out))
-        lines.append("ارزش ورودی: " + "{:,.0f}".format(total_val) + " تومان")
+
+        # خلاصه به تفکیک کالا
+        products = {}
+        for r in rows:
+            name = r["product_name"]
+            if name not in products:
+                products[name] = {"in": 0, "out": 0, "val": 0}
+            if r["delta"] > 0:
+                products[name]["in"] += r["delta"]
+                products[name]["val"] += r["delta"] * r["price"]
+            else:
+                products[name]["out"] += abs(r["delta"])
+
+        lines.append("خلاصه به تفکیک کالا:")
+        lines.append("-"*40)
+        total_val_all = 0
+        for name, data in products.items():
+            lines.append(name + ":")
+            lines.append("  ورود: " + str(data["in"]) + "  |  خروج: " + str(data["out"]))
+            lines.append("  ارزش ورودی: " + "{:,.0f}".format(data["val"]) + " تومان")
+            total_val_all += data["val"]
+            lines.append("")
+
+        lines.append("="*40)
+        lines.append("ارزش کل ورودی: " + "{:,.0f}".format(total_val_all) + " تومان")
         lines.append("تعداد تراکنش: " + str(len(rows)))
         lines.append("="*40)
+        lines.append("")
+        lines.append("جزئیات تراکنش‌ها:")
+        lines.append("-"*40)
         for r in rows:
             typ = "ورود" if r["delta"] > 0 else "خروج"
             lines.append(r["jdate"] + " | " + r["product_name"] + " | " + typ + ": " + str(abs(r["delta"])))
@@ -243,6 +267,33 @@ class DB:
                 r["supplier"], r["invoice_no"], r["receipt_no"]
             ]))
         return "\n".join(lines)
+
+    def send_to_telegram(self, token, chat_id):
+        """ارسال بکاپ به تلگرام"""
+        name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
+        dest = self.backup_dir / name
+        shutil.copy2(self.path, dest)
+
+        url = "https://api.telegram.org/bot" + token + "/sendDocument"
+        with open(str(dest), "rb") as f:
+            data = f.read()
+
+        boundary = "----boundary"
+        body = (
+            ("--" + boundary + "\r\n").encode() +
+            ('Content-Disposition: form-data; name="chat_id"\r\n\r\n').encode() +
+            (str(chat_id) + "\r\n").encode() +
+            ("--" + boundary + "\r\n").encode() +
+            ('Content-Disposition: form-data; name="document"; filename="' + name + '"\r\n').encode() +
+            ("Content-Type: application/octet-stream\r\n\r\n").encode() +
+            data +
+            ("\r\n--" + boundary + "--\r\n").encode()
+        )
+
+        req = urllib.request.Request(url, data=body)
+        req.add_header("Content-Type", "multipart/form-data; boundary=" + boundary)
+        resp = urllib.request.urlopen(req, timeout=30)
+        return resp.getcode() == 200
 
     def manual_backup(self):
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
@@ -528,7 +579,8 @@ def main(page: ft.Page):
                         return
                     ok = db.add_txn(row["name"], row["category"], qty, price, f_supplier.value.strip(), f_note.value.strip(), f_date.value.strip(), f_invoice.value.strip(), f_receipt.value.strip())
                 else:
-                    if db.qty(row["name"]) - qty < 0:
+                    current = db.qty(row["name"])
+                    if current < qty:
                         db.ensure_balance(row["name"], row["category"])
                     ok = db.add_txn(row["name"], row["category"], -qty, 0, "", f_note.value.strip(), f_date.value.strip(), "", "")
                 if not ok:
@@ -787,6 +839,16 @@ def main(page: ft.Page):
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
 
+            def do_telegram_backup(e):
+                try:
+                    ok = db.send_to_telegram("8803222202:AAHID2pZRd7F2BwcQrlxvdD6sMMRT8LL8Gs", "556818178")
+                    if ok:
+                        show_dialog("موفق ✓", "بکاپ به تلگرام ارسال شد!", C_GREEN)
+                    else:
+                        show_dialog("خطا", "ارسال ناموفق بود", C_RED)
+                except Exception as ex:
+                    show_dialog("خطا", "خطا در ارسال:\n" + str(ex), C_RED)
+
             def do_restore(path):
                 try:
                     db.restore(path)
@@ -803,6 +865,8 @@ def main(page: ft.Page):
                     ])),
                 ft.Container(height=8),
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
+                ft.Container(height=4),
+                ft.ElevatedButton("📨  ارسال بکاپ به تلگرام", on_click=do_telegram_backup, bgcolor="#229ED9", color="white", height=48, expand=True),
                 ft.Container(height=8),
                 ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
