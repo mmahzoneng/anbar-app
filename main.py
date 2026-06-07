@@ -7,8 +7,9 @@ import shutil
 import csv
 import traceback
 import sys
-import requests
 from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 def get_log_path():
     try:
@@ -252,7 +253,7 @@ class DB:
             ]))
         return "\n".join(lines)
 
-    # ========== ارسال به بله ==========
+    # ========== ارسال به بله (با urllib) ==========
     def send_to_bale(self):
         token = "99350975:ljWJHCnhC8JiCReN7yXzBVX9GbAe3mekIYA"
         chat_id = "936543882"
@@ -262,11 +263,29 @@ class DB:
             shutil.copy2(self.path, dest)
 
             url = f"https://tapi.bale.ai/bot{token}/sendDocument"
+            boundary = "flet_anbar_boundary"
+
             with open(str(dest), "rb") as f:
-                files = {"document": f}
-                data = {"chat_id": chat_id}
-                response = requests.post(url, data=data, files=files, timeout=30)
-                return response.status_code == 200 and response.json().get("ok", False)
+                file_content = f.read()
+
+            body = b""
+            body += f"--{boundary}\r\n".encode()
+            body += f'Content-Disposition: form-data; name="chat_id"\r\n\r\n'.encode()
+            body += f"{chat_id}\r\n".encode()
+            body += f"--{boundary}\r\n".encode()
+            body += f'Content-Disposition: form-data; name="document"; filename="{name}"\r\n'.encode()
+            body += b"Content-Type: application/octet-stream\r\n\r\n"
+            body += file_content
+            body += f"\r\n--{boundary}--\r\n".encode()
+
+            req = Request(url, data=body)
+            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+
+            with urlopen(req, timeout=30) as resp:
+                import json
+                result = json.loads(resp.read().decode())
+                return result.get("ok", False)
+
         except Exception as e:
             log_error(f"Bale send failed: {e}")
             return False
@@ -500,7 +519,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # فرم ورود (با فاکتور و رسید)
+        # فرم ورود (با فاکتور و رسید + filter)
         # ----------------------------------------------
         def render_enter():
             products = db.all_products()
@@ -515,7 +534,7 @@ def main(page: ft.Page):
             names = [r["name"] for r in products]
             prod_map = {r["name"]: r for r in products}
 
-            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0])
+            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0], filter=True)
             f_qty     = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_price   = ft.TextField(label="قیمت واحد (تومان)", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_supplier= ft.TextField(label="نام فروشنده / مصالح‌فروش", border_color=C_BLUE)
@@ -574,7 +593,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # فرم خروج (بدون فاکتور و رسید)
+        # فرم خروج (بدون فاکتور و رسید + filter)
         # ----------------------------------------------
         def render_exit():
             products = db.all_products()
@@ -589,7 +608,7 @@ def main(page: ft.Page):
             names = [r["name"] for r in products]
             prod_map = {r["name"]: r for r in products}
 
-            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0])
+            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0], filter=True)
             f_qty     = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_note    = ft.TextField(label="یادداشت", border_color=C_BLUE)
             f_date    = ft.TextField(label="تاریخ (شمسی)", value=jdatetime.datetime.now().strftime("%Y-%m-%d"), border_color=C_BLUE)
@@ -694,7 +713,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # گزارشات
+        # گزارشات (فاکتور و رسید کامل)
         # ----------------------------------------------
         def render_reports():
             nonlocal report_rows
@@ -702,8 +721,8 @@ def main(page: ft.Page):
             f_end      = ft.TextField(label="تا تاریخ", hint_text="1403-12-29", expand=True, border_color=C_BLUE)
             f_product  = ft.TextField(label="نام کالا", border_color=C_BLUE)
             f_supplier = ft.TextField(label="نام فروشنده", border_color=C_BLUE)
-            f_invoice  = ft.TextField(label="شماره فاکتور", border_color=C_BLUE)
-            f_receipt  = ft.TextField(label="شماره رسید انبار", border_color=C_BLUE)
+            f_invoice  = ft.TextField(label="شماره فاکتور", expand=True, border_color=C_BLUE)
+            f_receipt  = ft.TextField(label="شماره رسید انبار", expand=True, border_color=C_BLUE)
             f_type     = ft.Dropdown(label="نوع", options=[ft.dropdown.Option(x) for x in ["همه","ورود","خروج"]], value="همه")
             f_cat      = ft.Dropdown(label="دسته‌بندی", options=[ft.dropdown.Option(x) for x in ["همه"]+CATS], value="همه")
             results = ft.Column(spacing=8)
@@ -868,7 +887,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # پشتیبان‌گیری
+        # پشتیبان‌گیری (با کادر مسیر دستی)
         # ----------------------------------------------
         def show_backup():
             backups = db.list_backups()
@@ -894,9 +913,33 @@ def main(page: ft.Page):
             def do_restore(path):
                 try:
                     db.restore(path)
-                    show_dialog("موفق", "بازگردانی انجام شد — برنامه را ببندید و باز کنید", C_GREEN)
+                    # بعد از بازگردانی، مستقیم برگرد به صفحه اصلی
+                    render_products()
+                    page.snack_bar = ft.SnackBar(
+                        ft.Text("✅ بازگردانی با موفقیت انجام شد", color="white"),
+                        bgcolor=C_GREEN
+                    )
+                    page.snack_bar.open = True
+                    page.update()
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
+
+            # ----- بازگردانی از مسیر دستی -----
+            path_field = ft.TextField(
+                label="مسیر کامل فایل بکاپ (.db)",
+                hint_text="/storage/emulated/0/Download/filename.db",
+                border_color=C_BLUE,
+            )
+
+            def restore_from_path(e):
+                p = path_field.value.strip()
+                if not p:
+                    show_dialog("خطا", "مسیر را وارد کنید", C_RED)
+                    return
+                if not Path(p).exists():
+                    show_dialog("خطا", "فایل در این مسیر وجود ندارد", C_RED)
+                    return
+                do_restore(p)
 
             items = [
                 ft.Container(border_radius=12, bgcolor="#EFF6FF", padding=14,
@@ -909,8 +952,12 @@ def main(page: ft.Page):
                 ft.ElevatedButton("💾  تهیه بکاپ دستی", on_click=do_backup, bgcolor=C_BLUE, color="white", height=48, expand=True),
                 ft.Container(height=4),
                 ft.ElevatedButton("📨  ارسال بکاپ به بله", on_click=do_bale_backup, bgcolor="#229ED9", color="white", height=48, expand=True),
+                ft.Container(height=12),
+                ft.Text("بازگردانی از فایل بیرونی:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                path_field,
+                ft.ElevatedButton("📂  بازگردانی این فایل", on_click=restore_from_path, bgcolor=C_ORANGE, color="white", height=44, expand=True),
                 ft.Container(height=8),
-                ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                ft.Text("لیست بکاپ‌های داخلی ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
 
             if not backups:
