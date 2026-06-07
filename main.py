@@ -519,7 +519,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # فرم ورود (با فاکتور و رسید + filter)
+        # فرم ورود (با فیلتر جستجوی دستی)
         # ----------------------------------------------
         def render_enter():
             products = db.all_products()
@@ -531,10 +531,10 @@ def main(page: ft.Page):
                                         ft.Text("ابتدا کالا اضافه کنید", size=16, color=C_GRAY)]))])
                 return
 
-            names = [r["name"] for r in products]
+            all_names = [r["name"] for r in products]
             prod_map = {r["name"]: r for r in products}
 
-            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0], filter=True)
+            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in all_names], value=all_names[0])
             f_qty     = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_price   = ft.TextField(label="قیمت واحد (تومان)", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_supplier= ft.TextField(label="نام فروشنده / مصالح‌فروش", border_color=C_BLUE)
@@ -546,12 +546,35 @@ def main(page: ft.Page):
             qty_box = ft.Container(border_radius=10, bgcolor=C_BLUE + "15", padding=12,
                                    content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                        ft.Text("موجودی فعلی:", size=14, color=C_GRAY),
-                                       ft.Text(str(db.qty(names[0])), size=18, weight=ft.FontWeight.BOLD, color=C_BLUE),
+                                       ft.Text(str(db.qty(all_names[0])), size=18, weight=ft.FontWeight.BOLD, color=C_BLUE),
                                    ]))
+
+            # فیلتر جستجوی دستی
+            search_field = ft.TextField(label="جستجوی کالا (اختیاری)", border_color=C_BLUE, hint_text="بخشی از نام کالا را تایپ کنید...")
+
+            def update_dropdown_options(filter_text=""):
+                if not filter_text.strip():
+                    filtered = all_names
+                else:
+                    ft_lower = filter_text.lower().strip()
+                    filtered = [n for n in all_names if ft_lower in n.lower()]
+                if not filtered:
+                    filtered = all_names
+                f_product.options = [ft.dropdown.Option(n) for n in filtered]
+                if f_product.value not in filtered:
+                    f_product.value = filtered[0]
+                # به‌روزرسانی موجودی
+                qty_box.content.controls[1].value = str(db.qty(f_product.value))
+                page.update()
+
+            def on_search_change(e):
+                update_dropdown_options(search_field.value)
 
             def on_product_change(e):
                 qty_box.content.controls[1].value = str(db.qty(f_product.value))
                 page.update()
+
+            search_field.on_change = on_search_change
             f_product.on_change = on_product_change
 
             def save(e):
@@ -587,13 +610,13 @@ def main(page: ft.Page):
             set_body([
                 page_header("ورود کالا"),
                 ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
-                    f_product, qty_box, f_qty, f_price, f_supplier, f_invoice, f_receipt, f_note, f_date,
+                    search_field, f_product, qty_box, f_qty, f_price, f_supplier, f_invoice, f_receipt, f_note, f_date,
                     ft.ElevatedButton("ثبت ورود", on_click=save, bgcolor=C_GREEN, color="white", height=50, expand=True),
                 ])),
             ])
 
         # ----------------------------------------------
-        # فرم خروج (بدون فاکتور و رسید + filter)
+        # فرم خروج (با فیلتر جستجوی دستی)
         # ----------------------------------------------
         def render_exit():
             products = db.all_products()
@@ -605,10 +628,10 @@ def main(page: ft.Page):
                                         ft.Text("ابتدا کالا اضافه کنید", size=16, color=C_GRAY)]))])
                 return
 
-            names = [r["name"] for r in products]
+            all_names = [r["name"] for r in products]
             prod_map = {r["name"]: r for r in products}
 
-            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in names], value=names[0], filter=True)
+            f_product = ft.Dropdown(label="کالا", options=[ft.dropdown.Option(n) for n in all_names], value=all_names[0])
             f_qty     = ft.TextField(label="تعداد", value="1", keyboard_type=ft.KeyboardType.NUMBER, border_color=C_BLUE)
             f_note    = ft.TextField(label="یادداشت", border_color=C_BLUE)
             f_date    = ft.TextField(label="تاریخ (شمسی)", value=jdatetime.datetime.now().strftime("%Y-%m-%d"), border_color=C_BLUE)
@@ -616,12 +639,33 @@ def main(page: ft.Page):
             qty_box = ft.Container(border_radius=10, bgcolor=C_BLUE + "15", padding=12,
                                    content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                        ft.Text("موجودی فعلی:", size=14, color=C_GRAY),
-                                       ft.Text(str(db.qty(names[0])), size=18, weight=ft.FontWeight.BOLD, color=C_BLUE),
+                                       ft.Text(str(db.qty(all_names[0])), size=18, weight=ft.FontWeight.BOLD, color=C_BLUE),
                                    ]))
+
+            search_field = ft.TextField(label="جستجوی کالا (اختیاری)", border_color=C_BLUE, hint_text="بخشی از نام کالا را تایپ کنید...")
+
+            def update_dropdown_options(filter_text=""):
+                if not filter_text.strip():
+                    filtered = all_names
+                else:
+                    ft_lower = filter_text.lower().strip()
+                    filtered = [n for n in all_names if ft_lower in n.lower()]
+                if not filtered:
+                    filtered = all_names
+                f_product.options = [ft.dropdown.Option(n) for n in filtered]
+                if f_product.value not in filtered:
+                    f_product.value = filtered[0]
+                qty_box.content.controls[1].value = str(db.qty(f_product.value))
+                page.update()
+
+            def on_search_change(e):
+                update_dropdown_options(search_field.value)
 
             def on_product_change(e):
                 qty_box.content.controls[1].value = str(db.qty(f_product.value))
                 page.update()
+
+            search_field.on_change = on_search_change
             f_product.on_change = on_product_change
 
             def save(e):
@@ -649,7 +693,7 @@ def main(page: ft.Page):
             set_body([
                 page_header("خروج کالا"),
                 ft.Container(padding=16, content=ft.Column(spacing=12, controls=[
-                    f_product, qty_box, f_qty, f_note, f_date,
+                    search_field, f_product, qty_box, f_qty, f_note, f_date,
                     ft.ElevatedButton("ثبت خروج", on_click=save, bgcolor=C_RED, color="white", height=50, expand=True),
                 ])),
             ])
