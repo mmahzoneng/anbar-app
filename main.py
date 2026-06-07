@@ -38,14 +38,6 @@ class DB:
         self.path = str(base / "anbar.db")
         self.backup_dir = base / "backups"
         self.backup_dir.mkdir(exist_ok=True)
-
-        # پوشهٔ عمومی و ساده برای بازگردانی
-        self.public_backup_dir = Path("/storage/emulated/0/AnbarBackups")
-        try:
-            self.public_backup_dir.mkdir(parents=True, exist_ok=True)
-        except:
-            pass  # اگر دسترسی نداشت، فقط از backup_dir استفاده می‌کنیم
-
         self._init()
         self._migrate()
         self._auto_backup()
@@ -305,15 +297,7 @@ class DB:
         return str(dest)
 
     def list_backups(self):
-        backups = []
-        # بک‌آپ‌های داخلی
-        backups.extend([str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)])
-        # بک‌آپ‌های پوشهٔ عمومی
-        try:
-            backups.extend([str(f) for f in sorted(self.public_backup_dir.glob("*.db"), reverse=True)])
-        except:
-            pass
-        return backups
+        return [str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)]
 
     def restore(self, path):
         shutil.copy2(path, self.path)
@@ -346,6 +330,28 @@ def main(page: ft.Page):
         active_tab = [0]
         report_rows = []
         body = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
+
+        # ========== FilePicker یکبار ساخته می‌شود ==========
+        file_picker = ft.FilePicker(on_result=lambda e: on_file_picked(e))
+        page.overlay.append(file_picker)
+
+        def on_file_picked(e):
+            if e.files is None or len(e.files) == 0:
+                return
+            selected_path = e.files[0].path
+            if not selected_path:
+                return
+            try:
+                db.restore(selected_path)
+                render_products()
+                page.snack_bar = ft.SnackBar(
+                    ft.Text("✅ بازگردانی با موفقیت انجام شد", color="white"),
+                    bgcolor=C_GREEN
+                )
+                page.snack_bar.open = True
+                page.update()
+            except Exception as ex:
+                show_dialog("خطا", str(ex), C_RED)
 
         def show_dialog(title, message, color=C_BLUE):
             def close(e=None):
@@ -946,7 +952,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # پشتیبان‌گیری (پوشهٔ عمومی AnbarBackups)
+        # پشتیبان‌گیری (با FilePicker)
         # ----------------------------------------------
         def show_backup():
             backups = db.list_backups()
@@ -994,16 +1000,10 @@ def main(page: ft.Page):
                 ft.Container(height=4),
                 ft.ElevatedButton("📨  ارسال بکاپ به بله", on_click=do_bale_backup, bgcolor="#229ED9", color="white", height=48, expand=True),
                 ft.Container(height=12),
-                ft.Text("📥 بازگردانی از پوشهٔ عمومی:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
-                ft.Text(
-                    "فایل بکاپ (.db) را در پوشه‌ی زیر کپی کنید:\n"
-                    "حافظه داخلی / AnbarBackups\n\n"
-                    "سپس دکمهٔ بازخوانی را بزنید.",
-                    size=12, color=C_GRAY
-                ),
-                ft.ElevatedButton("🔄 بازخوانی لیست بکاپ‌ها", on_click=lambda e: show_backup(), bgcolor=C_BLUE, color="white", height=44, expand=True),
+                ft.Text("بازگردانی فایل بکاپ:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                ft.ElevatedButton("📂 انتخاب فایل بکاپ (.db)", on_click=lambda e: file_picker.pick_files(allowed_extensions=["db"]), bgcolor=C_ORANGE, color="white", height=48, expand=True),
                 ft.Container(height=8),
-                ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                ft.Text("لیست بکاپ‌های داخلی ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
 
             if not backups:
