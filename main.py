@@ -38,6 +38,14 @@ class DB:
         self.path = str(base / "anbar.db")
         self.backup_dir = base / "backups"
         self.backup_dir.mkdir(exist_ok=True)
+
+        # پوشهٔ عمومی و ساده برای بازگردانی
+        self.public_backup_dir = Path("/storage/emulated/0/AnbarBackups")
+        try:
+            self.public_backup_dir.mkdir(parents=True, exist_ok=True)
+        except:
+            pass  # اگر دسترسی نداشت، فقط از backup_dir استفاده می‌کنیم
+
         self._init()
         self._migrate()
         self._auto_backup()
@@ -297,7 +305,15 @@ class DB:
         return str(dest)
 
     def list_backups(self):
-        return [str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)]
+        backups = []
+        # بک‌آپ‌های داخلی
+        backups.extend([str(f) for f in sorted(self.backup_dir.glob("*.db"), reverse=True)])
+        # بک‌آپ‌های پوشهٔ عمومی
+        try:
+            backups.extend([str(f) for f in sorted(self.public_backup_dir.glob("*.db"), reverse=True)])
+        except:
+            pass
+        return backups
 
     def restore(self, path):
         shutil.copy2(path, self.path)
@@ -930,7 +946,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # پشتیبان‌گیری (با انتقال فایل به پوشه داخلی)
+        # پشتیبان‌گیری (پوشهٔ عمومی AnbarBackups)
         # ----------------------------------------------
         def show_backup():
             backups = db.list_backups()
@@ -978,11 +994,12 @@ def main(page: ft.Page):
                 ft.Container(height=4),
                 ft.ElevatedButton("📨  ارسال بکاپ به بله", on_click=do_bale_backup, bgcolor="#229ED9", color="white", height=48, expand=True),
                 ft.Container(height=12),
-                ft.Text("📥 برای بازگردانی فایل بکاپ دانلودی:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                ft.Text("📥 بازگردانی از پوشهٔ عمومی:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
                 ft.Text(
-                    "۱. با یک فایل‌منیجر فایل .db را به پوشه زیر منتقل کنید:\n"
-                    + str(db.backup_dir),
-                    size=12, color=C_GRAY, selectable=True
+                    "فایل بکاپ (.db) را در پوشه‌ی زیر کپی کنید:\n"
+                    "حافظه داخلی / AnbarBackups\n\n"
+                    "سپس دکمهٔ بازخوانی را بزنید.",
+                    size=12, color=C_GRAY
                 ),
                 ft.ElevatedButton("🔄 بازخوانی لیست بکاپ‌ها", on_click=lambda e: show_backup(), bgcolor=C_BLUE, color="white", height=44, expand=True),
                 ft.Container(height=8),
