@@ -563,7 +563,6 @@ def main(page: ft.Page):
                 f_product.options = [ft.dropdown.Option(n) for n in filtered]
                 if f_product.value not in filtered:
                     f_product.value = filtered[0]
-                # به‌روزرسانی موجودی
                 qty_box.content.controls[1].value = str(db.qty(f_product.value))
                 page.update()
 
@@ -931,7 +930,7 @@ def main(page: ft.Page):
             ])
 
         # ----------------------------------------------
-        # پشتیبان‌گیری (با کادر مسیر دستی)
+        # پشتیبان‌گیری (با انتقال فایل به پوشه داخلی)
         # ----------------------------------------------
         def show_backup():
             backups = db.list_backups()
@@ -957,7 +956,6 @@ def main(page: ft.Page):
             def do_restore(path):
                 try:
                     db.restore(path)
-                    # بعد از بازگردانی، مستقیم برگرد به صفحه اصلی
                     render_products()
                     page.snack_bar = ft.SnackBar(
                         ft.Text("✅ بازگردانی با موفقیت انجام شد", color="white"),
@@ -967,23 +965,6 @@ def main(page: ft.Page):
                     page.update()
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
-
-            # ----- بازگردانی از مسیر دستی -----
-            path_field = ft.TextField(
-                label="مسیر کامل فایل بکاپ (.db)",
-                hint_text="/storage/emulated/0/Download/filename.db",
-                border_color=C_BLUE,
-            )
-
-            def restore_from_path(e):
-                p = path_field.value.strip()
-                if not p:
-                    show_dialog("خطا", "مسیر را وارد کنید", C_RED)
-                    return
-                if not Path(p).exists():
-                    show_dialog("خطا", "فایل در این مسیر وجود ندارد", C_RED)
-                    return
-                do_restore(p)
 
             items = [
                 ft.Container(border_radius=12, bgcolor="#EFF6FF", padding=14,
@@ -997,11 +978,15 @@ def main(page: ft.Page):
                 ft.Container(height=4),
                 ft.ElevatedButton("📨  ارسال بکاپ به بله", on_click=do_bale_backup, bgcolor="#229ED9", color="white", height=48, expand=True),
                 ft.Container(height=12),
-                ft.Text("بازگردانی از فایل بیرونی:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
-                path_field,
-                ft.ElevatedButton("📂  بازگردانی این فایل", on_click=restore_from_path, bgcolor=C_ORANGE, color="white", height=44, expand=True),
+                ft.Text("📥 برای بازگردانی فایل بکاپ دانلودی:", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                ft.Text(
+                    "۱. با یک فایل‌منیجر فایل .db را به پوشه زیر منتقل کنید:\n"
+                    + str(db.backup_dir),
+                    size=12, color=C_GRAY, selectable=True
+                ),
+                ft.ElevatedButton("🔄 بازخوانی لیست بکاپ‌ها", on_click=lambda e: show_backup(), bgcolor=C_BLUE, color="white", height=44, expand=True),
                 ft.Container(height=8),
-                ft.Text("لیست بکاپ‌های داخلی ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
+                ft.Text("لیست بکاپ‌ها ("+str(len(backups))+"):", size=14, weight=ft.FontWeight.BOLD, color=C_DARK),
             ]
 
             if not backups:
