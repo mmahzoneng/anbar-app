@@ -7,8 +7,7 @@ import shutil
 import csv
 import traceback
 import sys
-import socket
-import threading
+import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
@@ -39,7 +38,6 @@ def log_error(msg):
 sys.excepthook = lambda t, v, tb: log_error("".join(traceback.format_exception(t, v, tb)))
 
 
-# ========== پایگاه داده ==========
 class DB:
     def __init__(self):
         storage = os.getenv("FLET_APP_STORAGE_DATA")
@@ -332,7 +330,6 @@ class DB:
             ]))
         return "\n".join(lines)
 
-    # ---------- ارسال به بله ----------
     def send_to_bale(self):
         token = "99350975:ljWJHCnhC8JiCReN7yXzBVX9GbAe3mekIYA"
         chat_id = "936543882"
@@ -361,12 +358,43 @@ class DB:
             req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
 
             with urlopen(req, timeout=30) as resp:
-                import json
                 result = json.loads(resp.read().decode())
                 return result.get("ok", False)
         except Exception as e:
             log_error(f"Bale send failed: {e}")
             return False
+
+    def download_backup_from_bale(self):
+        token = "99350975:ljWJHCnhC8JiCReN7yXzBVX9GbAe3mekIYA"
+        try:
+            url = f"https://tapi.bale.ai/bot{token}/getUpdates?limit=5&offset=-1"
+            with urlopen(url, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+
+            if not data.get("ok") or not data.get("result"):
+                return None
+
+            for update in reversed(data["result"]):
+                message = update.get("message", {})
+                document = message.get("document")
+                if document and document.get("file_name", "").endswith(".db"):
+                    file_id = document.get("file_id")
+                    file_url = f"https://tapi.bale.ai/bot{token}/getFile?file_id={file_id}"
+                    with urlopen(file_url, timeout=15) as resp:
+                        file_data = json.loads(resp.read().decode())
+                    if file_data.get("ok"):
+                        download_url = f"https://tapi.bale.ai/file/bot{token}/{file_data['result']['file_path']}"
+                        with urlopen(download_url, timeout=60) as resp:
+                            content = resp.read()
+                        fname = document.get("file_name")
+                        dest = self.backup_dir / fname
+                        with open(str(dest), "wb") as f:
+                            f.write(content)
+                        return fname
+            return None
+        except Exception as e:
+            log_error(f"Bale download failed: {e}")
+            return None
 
     def manual_backup(self):
         name = "anbar_backup_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
@@ -395,103 +423,7 @@ C_ORANGE = "#EA580C"
 C_YELLOW = "#D97706"
 CATS = ["ساختمانی", "آشپزخانه"]
 
-# ========== وب‌سرور ==========
-SERVER_RUNNING = False
-SERVER_THREAD = None
 
-
-def start_web_server(backup_dir, page):
-    global SERVER_RUNNING, SERVER_THREAD
-    if SERVER_RUNNING:
-        return
-
-    def server_thread():
-        global SERVER_RUNNING
-        host = "0.0.0.0"
-        port = 8080
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            server_socket.bind((host, port))
-            server_socket.listen(5)
-        except:
-            return
-
-        while SERVER_RUNNING:
-            try:
-                server_socket.settimeout(1)
-                client_socket, addr = server_socket.accept()
-                request = client_socket.recv(2048).decode("utf-8", errors="ignore")
-
-                if "GET / " in request or "GET / HTTP" in request:
-                    html = (
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
-                        "<html><body dir='rtl' style='font-family:tahoma;'>"
-                        "<h2>📥 انتقال فایل بکاپ به برنامه انبار فاز ۷</h2>"
-                        "<form method='POST' enctype='multipart/form-data'>"
-                        "<input type='file' name='file' accept='.db'><br><br>"
-                        "<button type='submit'>ارسال فایل</button>"
-                        "</form></body></html>"
-                    )
-                    client_socket.send(html.encode("utf-8"))
-
-                elif "POST /" in request:
-                    content_length = 0
-                    for line in request.split("\r\n"):
-                        if line.lower().startswith("content-length:"):
-                            content_length = int(line.split(":")[1].strip())
-                    body = request.encode("utf-8")
-                    while len(body) < content_length:
-                        chunk = client_socket.recv(1024)
-                        if not chunk:
-                            break
-                        body += chunk
-
-                    boundary = body.split(b"\r\n")[0].decode("utf-8")
-                    file_start = body.find(b"filename=\"")
-                    if file_start > 0:
-                        file_start = body.find(b"\r\n\r\n", file_start) + 4
-                        file_end = body.rfind(boundary.encode("utf-8")) - 4
-                        file_data = body[file_start:file_end]
-                        file_name = "backup_uploaded_" + jdatetime.datetime.now().strftime("%Y-%m-%d_%H-%M") + ".db"
-                        dest = backup_dir / file_name
-                        with open(str(dest), "wb") as f:
-                            f.write(file_data)
-                        html = (
-                            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
-                            "<html><body><h2>✅ فایل با موفقیت ذخیره شد!</h2><a href='/'>بازگشت</a></body></html>"
-                        )
-                    else:
-                        html = (
-                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
-                            "<html><body><h2>❌ خطا در دریافت فایل</h2></body></html>"
-                        )
-                    client_socket.send(html.encode("utf-8"))
-
-                client_socket.close()
-            except socket.timeout:
-                continue
-            except:
-                continue
-        server_socket.close()
-
-    SERVER_RUNNING = True
-    SERVER_THREAD = threading.Thread(target=server_thread, daemon=True)
-    SERVER_THREAD.start()
-
-
-def get_wifi_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return "127.0.0.1"
-
-
-# ========== رابط کاربری ==========
 def main(page: ft.Page):
     try:
         page.title = "انبار فاز 7"
@@ -554,7 +486,7 @@ def main(page: ft.Page):
                 ),
             ])
 
-        # ========== داشبورد (انبار) ==========
+        # ========== داشبورد ==========
         def render_products():
             rows = db.all_products()
             low_count = len(db.low_stock())
@@ -1237,8 +1169,6 @@ def main(page: ft.Page):
         # ========== پشتیبان‌گیری ==========
         def show_backup():
             backups = db.list_backups()
-            ip = get_wifi_ip()
-            server_url = f"http://{ip}:8080"
 
             def do_backup(e):
                 try:
@@ -1260,6 +1190,16 @@ def main(page: ft.Page):
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
 
+            def do_download_from_bale(e):
+                fname = db.download_backup_from_bale()
+                if fname:
+                    show_dialog("موفق", f"فایل {fname} از بله دریافت و به لیست بک‌آپ‌ها اضافه شد.", C_GREEN)
+                    show_backup()
+                else:
+                    show_dialog("خطا",
+                                "نتوانستیم فایلی پیدا کنیم.\nمطمئن شوید فایل .db را در ربات برای خود ربات فرستاده‌اید.",
+                                C_RED)
+
             def do_restore(path):
                 try:
                     db.restore(path)
@@ -1272,19 +1212,6 @@ def main(page: ft.Page):
                     page.update()
                 except Exception as ex:
                     show_dialog("خطا", str(ex), C_RED)
-
-            def start_server(e):
-                global SERVER_RUNNING
-                if not SERVER_RUNNING:
-                    start_web_server(db.backup_dir, page)
-                    show_dialog("وب‌سرور روشن شد",
-                                f"حالا با لپ‌تاپ یا گوشی به این آدرس برو:\n{server_url}\n\n"
-                                f"فایل بکاپ را انتخاب کن و ارسال کن.",
-                                C_BLUE)
-                else:
-                    show_dialog("وب‌سرور فعال است",
-                                f"هم‌اکنون در حال اجراست.\nآدرس: {server_url}",
-                                C_BLUE)
 
             items = [
                 ft.Container(border_radius=12, bgcolor="#EFF6FF", padding=14,
@@ -1303,17 +1230,13 @@ def main(page: ft.Page):
                 ft.ElevatedButton("📨  ارسال بکاپ به بله", on_click=do_bale_backup, bgcolor="#229ED9",
                                   color="white", height=48, expand=True),
                 ft.Container(height=12),
-                ft.Text("📥 دریافت فایل بکاپ (بدون نیاز به کابل)", size=14, weight=ft.FontWeight.BOLD,
+                ft.Text("📥 دریافت آخرین بک‌آپ از بله", size=14, weight=ft.FontWeight.BOLD,
                         color=C_DARK),
-                ft.Text(
-                    "۱. دکمهٔ زیر را بزنید.\n"
-                    "۲. در مرورگر لپ‌تاپ یا گوشی، آدرس زیر را باز کنید:\n" + server_url + "\n"
-                    "۳. فایل بکاپ (.db) را انتخاب و ارسال کنید.\n"
-                    "۴. لیست را بازخوانی کنید.",
-                    size=12, color=C_GRAY
-                ),
-                ft.ElevatedButton("🚀  شروع وب‌سرور", on_click=start_server, bgcolor=C_GREEN, color="white",
-                                  height=48, expand=True),
+                ft.Text("فایل بک‌آپ (.db) را در ربات بله برای خود ربات بفرستید، سپس دکمهٔ زیر را بزنید.",
+                        size=12, color=C_GRAY),
+                ft.ElevatedButton("📩 دریافت از بله", on_click=do_download_from_bale, bgcolor=C_ORANGE,
+                                  color="white", height=48, expand=True),
+                ft.Container(height=8),
                 ft.ElevatedButton("🔄 بازخوانی لیست بکاپ‌ها", on_click=lambda e: show_backup(),
                                   bgcolor=C_BLUE, color="white", height=44, expand=True),
                 ft.Container(height=8),
