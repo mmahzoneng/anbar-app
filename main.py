@@ -289,13 +289,13 @@ class DB:
         for name, data in products.items():
             lines.append(name + ":")
             lines.append("  ورود: " + str(data["in"]) + "  |  خروج: " + str(data["out"]))
-            lines.append("  ارزش ورودی: " + "{:,.0f}".format(data["val"]) + " تومان")
+            lines.append("  ارزش ورودی: " + "{:,.2f}".format(data["val"]) + " تومان")
             total_val_all += data["val"]
             lines.append("")
 
         lines += [
             "=" * 40,
-            "ارزش کل ورودی: " + "{:,.0f}".format(total_val_all) + " تومان",
+            "ارزش کل ورودی: " + "{:,.2f}".format(total_val_all) + " تومان",
             "تعداد تراکنش: " + str(len(rows)),
             "=" * 40,
             "",
@@ -312,7 +312,7 @@ class DB:
                     lines.append("  فاکتور: " + r["invoice_no"])
                 if r["receipt_no"]:
                     lines.append("  رسید: " + r["receipt_no"])
-                lines.append("  ارزش: " + "{:,.0f}".format(abs(r["delta"]) * r["price"]) + " تومان")
+                lines.append("  ارزش: " + "{:,.2f}".format(abs(r["delta"]) * r["price"]) + " تومان")
             if r["note"]:
                 lines.append("  یادداشت: " + r["note"])
             lines.append("")
@@ -325,7 +325,7 @@ class DB:
             lines.append(",".join([
                 r["jdate"], r["product_name"], r["category"], typ,
                 str(abs(r["delta"])), str(r["price"]),
-                str(abs(r["delta"]) * r["price"]),
+                "{:,.2f}".format(abs(r["delta"]) * r["price"]),
                 r["supplier"], r["invoice_no"], r["receipt_no"]
             ]))
         return "\n".join(lines)
@@ -503,7 +503,7 @@ def main(page: ft.Page):
                                      content=ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END,
                                                        controls=[
                                                            ft.Text("ارزش کل انبار", size=11, color="white"),
-                                                           ft.Text("{:,.0f} ت".format(total_val), size=15,
+                                                           ft.Text("{:,.2f} ت".format(total_val), size=15,
                                                                    weight=ft.FontWeight.BOLD, color="white"),
                                                        ])),
                     ]),
@@ -718,10 +718,26 @@ def main(page: ft.Page):
             search_field.on_change = on_search_change
             f_product.on_change = on_product_change
 
+            # ====== فرمت خودکار قیمت ======
+            def format_price(e):
+                text = f_price.value.replace(",", "")
+                if text == "":
+                    f_price.value = ""
+                    f_price.update()
+                    return
+                try:
+                    num = float(text)
+                    f_price.value = "{:,.0f}".format(num)   # عدد صحیح با کاما
+                    f_price.update()
+                except ValueError:
+                    pass
+
+            f_price.on_blur = format_price   # وقتی کاربر از فیلد خارج شد
+
             def save(e):
                 try:
                     qty = float(f_qty.value or 0)
-                    price = float(f_price.value or 0)
+                    price = float(f_price.value.replace(",", "") or 0)
                 except ValueError:
                     show_dialog("خطا", "تعداد یا قیمت نادرست است", C_RED)
                     return
@@ -974,19 +990,19 @@ def main(page: ft.Page):
                                          content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                                              ft.Column(spacing=2, controls=[
                                                  ft.Text("ورود", size=11, color=C_GRAY),
-                                                 ft.Text(str(total_in), size=15, weight=ft.FontWeight.BOLD,
-                                                         color=C_GREEN)
+                                                 ft.Text("{:,.2f}".format(total_in), size=15,
+                                                         weight=ft.FontWeight.BOLD, color=C_GREEN)
                                              ]),
                                              ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                                        controls=[
                                                            ft.Text("خروج", size=11, color=C_GRAY),
-                                                           ft.Text(str(total_out), size=15,
+                                                           ft.Text("{:,.2f}".format(total_out), size=15,
                                                                    weight=ft.FontWeight.BOLD, color=C_RED)
                                                        ]),
                                              ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END,
                                                        controls=[
                                                            ft.Text("ارزش ورودی", size=11, color=C_GRAY),
-                                                           ft.Text("{:,.0f}ت".format(total_val), size=15,
+                                                           ft.Text("{:,.2f} ت".format(total_val), size=15,
                                                                    weight=ft.FontWeight.BOLD, color=C_BLUE)
                                                        ]),
                                          ]))
@@ -1025,7 +1041,7 @@ def main(page: ft.Page):
                                                                                 color=C_GREEN if is_in else C_RED,
                                                                                 size=13,
                                                                                 weight=ft.FontWeight.BOLD)),
-                                                               ft.Text("{:,.0f}ت".format(
+                                                               ft.Text("{:,.2f} ت".format(
                                                                    abs(r["delta"]) * r["price"]) if is_in else "",
                                                                        size=11, color=C_GRAY),
                                                                ft.IconButton(ft.Icons.EDIT_OUTLINED,
@@ -1053,11 +1069,11 @@ def main(page: ft.Page):
                                                  ft.Column(spacing=2,
                                                            horizontal_alignment=ft.CrossAxisAlignment.END,
                                                            controls=[
-                                                               ft.Text("ورود: " + str(r["total_in"]), size=12,
+                                                               ft.Text("ورود: {0:,.2f}".format(r["total_in"]), size=12,
                                                                        color=C_GREEN),
-                                                               ft.Text("خروج: " + str(r["total_out"]), size=12,
+                                                               ft.Text("خروج: {0:,.2f}".format(r["total_out"]), size=12,
                                                                        color=C_RED),
-                                                               ft.Text("{:,.0f}ت".format(r["total_val"]), size=12,
+                                                               ft.Text("{:,.2f} ت".format(r["total_val"]), size=12,
                                                                        weight=ft.FontWeight.BOLD, color=C_BLUE),
                                                            ]),
                                              ]))
@@ -1084,7 +1100,7 @@ def main(page: ft.Page):
                                                            horizontal_alignment=ft.CrossAxisAlignment.END,
                                                            controls=[
                                                                ft.Text("جمع خرید", size=10, color=C_GRAY),
-                                                               ft.Text("{:,.0f}ت".format(r["total_val"]), size=14,
+                                                               ft.Text("{:,.2f} ت".format(r["total_val"]), size=14,
                                                                        weight=ft.FontWeight.BOLD, color=C_BLUE),
                                                            ]),
                                              ]))
@@ -1306,9 +1322,14 @@ def main(page: ft.Page):
             ]
             tab_bar_row.update()
 
+        # ========== اضافه کردن تب‌ها با padding مناسب ==========
         page.add(ft.Column(expand=True, spacing=0, controls=[
             ft.Container(expand=True, content=body),
-            ft.Container(bgcolor=C_WHITE, padding=4, content=tab_bar_row),
+            ft.Container(
+                bgcolor=C_WHITE,
+                padding=ft.padding.only(left=4, top=4, right=4, bottom=10),
+                content=tab_bar_row
+            ),
         ]))
 
         refresh_tabs()
