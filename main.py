@@ -718,7 +718,7 @@ def main(page: ft.Page):
             search_field.on_change = on_search_change
             f_product.on_change = on_product_change
 
-            # ====== فرمت خودکار قیمت (فقط هنگام خروج از فیلد) ======
+            # ====== فرمت خودکار قیمت ======
             def format_price(e):
                 text = f_price.value.replace(",", "")
                 if text == "":
@@ -923,7 +923,7 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ========== گزارشات (با دو رقم اعشار) ==========
+        # ========== گزارشات (همه فرمت‌شده) ==========
         def render_reports():
             nonlocal report_rows
             f_start = ft.TextField(label="از تاریخ", hint_text="1403-01-01", expand=True, border_color=C_BLUE)
