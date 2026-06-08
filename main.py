@@ -656,7 +656,7 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ========== فرم ورود (با جستجوی دستی) ==========
+        # ========== فرم ورود (با جستجوی دستی و فرمت قیمت) ==========
         def render_enter():
             products = db.all_products()
             if not products:
@@ -718,7 +718,7 @@ def main(page: ft.Page):
             search_field.on_change = on_search_change
             f_product.on_change = on_product_change
 
-            # ====== فرمت خودکار قیمت ======
+            # ====== فرمت خودکار قیمت (فقط هنگام خروج از فیلد) ======
             def format_price(e):
                 text = f_price.value.replace(",", "")
                 if text == "":
@@ -727,12 +727,12 @@ def main(page: ft.Page):
                     return
                 try:
                     num = float(text)
-                    f_price.value = "{:,.0f}".format(num)   # عدد صحیح با کاما
+                    f_price.value = "{:,.0f}".format(num)   # عدد صحیح با جداکننده هزارگان
                     f_price.update()
                 except ValueError:
                     pass
 
-            f_price.on_blur = format_price   # وقتی کاربر از فیلد خارج شد
+            f_price.on_blur = format_price
 
             def save(e):
                 try:
@@ -770,7 +770,7 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ========== فرم خروج (با جستجوی دستی) ==========
+        # ========== فرم خروج ==========
         def render_exit():
             products = db.all_products()
             if not products:
@@ -923,7 +923,7 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ========== گزارشات ==========
+        # ========== گزارشات (با دو رقم اعشار) ==========
         def render_reports():
             nonlocal report_rows
             f_start = ft.TextField(label="از تاریخ", hint_text="1403-01-01", expand=True, border_color=C_BLUE)
@@ -1322,14 +1322,9 @@ def main(page: ft.Page):
             ]
             tab_bar_row.update()
 
-        # ========== اضافه کردن تب‌ها با padding مناسب ==========
         page.add(ft.Column(expand=True, spacing=0, controls=[
             ft.Container(expand=True, content=body),
-            ft.Container(
-                bgcolor=C_WHITE,
-                padding=ft.padding.only(left=4, top=4, right=4, bottom=10),
-                content=tab_bar_row
-            ),
+            ft.Container(bgcolor=C_WHITE, padding=4, content=tab_bar_row),
         ]))
 
         refresh_tabs()
