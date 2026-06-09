@@ -586,13 +586,13 @@ def main(page: ft.Page):
                                              ft.Container(border_radius=10, bgcolor=color + "15", padding=10,
                                                           content=ft.Column(spacing=2, controls=[
                                                               ft.Text("موجودی", size=10, color=C_GRAY),
-                                                              ft.Text(str(qty) + " " + r["unit"], size=16,
+                                                              ft.Text("{:,.2f}".format(qty) + " " + r["unit"], size=16,
                                                                       weight=ft.FontWeight.BOLD, color=color),
                                                           ])),
                                              ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                                        controls=[
                                                            ft.Text("حداقل موجودی", size=10, color=C_GRAY),
-                                                           ft.Text(str(r["min_qty"]) + " " + r["unit"], size=13,
+                                                           ft.Text("{:,.2f}".format(r["min_qty"]) + " " + r["unit"], size=13,
                                                                    color=C_DARK),
                                                        ]),
                                              ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END,
@@ -656,7 +656,7 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ========== فرم ورود (با جستجوی دستی و فرمت قیمت) ==========
+        # ========== فرم ورود (با ثبت سریع و جلوگیری از تکرار کالا در فاکتور) ==========
         def render_enter():
             products = db.all_products()
             if not products:
@@ -744,21 +744,38 @@ def main(page: ft.Page):
                 if qty <= 0:
                     show_dialog("خطا", "تعداد باید بزرگتر از صفر باشد", C_YELLOW)
                     return
+
+                invoice = f_invoice.value.strip()
+                receipt = f_receipt.value.strip()
                 row = prod_map[f_product.value]
+
+                # ----- بررسی تکراری نبودن ترکیب فاکتور/رسید + کالا -----
+                if invoice:
+                    existing_inv = db.search_txns(invoice_kw=invoice, keyword=row["name"])
+                    if existing_inv:
+                        show_dialog("خطا", "این کالا قبلاً با همین شماره فاکتور ثبت شده است!", C_RED)
+                        return
+                if receipt:
+                    existing_rec = db.search_txns(receipt_kw=receipt, keyword=row["name"])
+                    if existing_rec:
+                        show_dialog("خطا", "این کالا قبلاً با همین شماره رسید انبار ثبت شده است!", C_RED)
+                        return
+                # -------------------------------------------------------
+
                 ok = db.add_txn(row["name"], row["category"], qty, price,
                                 f_supplier.value.strip(), f_note.value.strip(), f_date.value.strip(),
-                                f_invoice.value.strip(), f_receipt.value.strip())
+                                invoice, receipt)
                 if not ok:
                     show_dialog("خطا", "خطا در ثبت!", C_RED)
                     return
                 show_dialog("موفق", "ورود ثبت شد ✓", C_GREEN)
                 qty_box.content.controls[1].value = str(db.qty(row["name"]))
+
+                # --- فقط تعداد و قیمت را خالی کن (ثبت سریع) ---
                 f_qty.value = "1"
                 f_price.value = ""
-                f_supplier.value = ""
-                f_invoice.value = ""
-                f_receipt.value = ""
                 f_note.value = ""
+                # فروشنده، فاکتور، رسید، تاریخ و کالا باقی می‌مانند
                 page.update()
 
             set_body([
