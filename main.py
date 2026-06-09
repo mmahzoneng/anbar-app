@@ -288,7 +288,7 @@ class DB:
         total_val_all = 0
         for name, data in products.items():
             lines.append(name + ":")
-            lines.append("  ورود: " + str(data["in"]) + "  |  خروج: " + str(data["out"]))
+            lines.append("  ورود: " + "{:,.2f}".format(data["in"]) + "  |  خروج: " + "{:,.2f}".format(data["out"]))
             lines.append("  ارزش ورودی: " + "{:,.2f}".format(data["val"]) + " تومان")
             total_val_all += data["val"]
             lines.append("")
@@ -304,7 +304,7 @@ class DB:
         ]
         for r in rows:
             typ = "ورود" if r["delta"] > 0 else "خروج"
-            lines.append(r["jdate"] + " | " + r["product_name"] + " | " + typ + ": " + str(abs(r["delta"])))
+            lines.append(r["jdate"] + " | " + r["product_name"] + " | " + typ + ": " + "{:,.2f}".format(abs(r["delta"])))
             if r["delta"] > 0:
                 if r["supplier"]:
                     lines.append("  فروشنده: " + r["supplier"])
@@ -324,7 +324,7 @@ class DB:
             typ = "ورود" if r["delta"] > 0 else "خروج"
             lines.append(",".join([
                 r["jdate"], r["product_name"], r["category"], typ,
-                str(abs(r["delta"])), str(r["price"]),
+                "{:,.2f}".format(abs(r["delta"])), str(r["price"]),
                 "{:,.2f}".format(abs(r["delta"]) * r["price"]),
                 r["supplier"], r["invoice_no"], r["receipt_no"]
             ]))
