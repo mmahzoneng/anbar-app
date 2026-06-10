@@ -649,25 +649,11 @@ def main(page: ft.Page):
 
             set_body(controls)
 
-        # ========== داشبورد (اصلاح‌شده) ==========
-        def render_products(filter_text=""):
+        # ========== داشبورد (ساده و پایدار - بدون جستجو) ==========
+        def render_products():
             rows = db.all_products()
             low_count = len(db.low_stock())
             total_val = db.total_value()
-
-            if filter_text.strip():
-                fl = filter_text.lower().strip()
-                filtered_rows = [r for r in rows if fl in r["name"].lower()]
-            else:
-                filtered_rows = rows
-
-            search_field = ft.TextField(
-                label="جستجوی کالا",
-                border_color=C_BLUE,
-                hint_text="نام کالا را تایپ کنید...",
-                value=filter_text,
-            )
-            search_field.on_change = lambda e: render_products(e.control.value)
 
             controls = [
                 ft.Container(bgcolor=C_BLUE, padding=20, content=ft.Column(spacing=10, controls=[
@@ -708,32 +694,29 @@ def main(page: ft.Page):
                     ft.ElevatedButton("💾", on_click=lambda e: show_backup(),
                                       bgcolor=C_WHITE, color=C_BLUE, height=44, width=54),
                 ])),
-                ft.Container(padding=ft.padding.symmetric(horizontal=12), content=search_field),
-                ft.Container(height=8),
             ]
 
-            if not filtered_rows:
+            if not rows:
                 controls.append(
                     ft.Container(padding=60, content=ft.Column(
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12,
                         controls=[
                             ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=70, color=C_LIGHT),
-                            ft.Text("انبار خالی است" if not rows else "کالایی با این نام یافت نشد", size=18, color=C_GRAY)
+                            ft.Text("انبار خالی است", size=18, color=C_GRAY)
                         ],
                     ))
                 )
             else:
                 if low_count > 0:
                     controls.append(
-                        ft.Container(margin=ft.margin.symmetric(horizontal=12), border_radius=10,
-                                     bgcolor="#FEF2F2", padding=10,
+                        ft.Container(margin=10, border_radius=10, bgcolor="#FEF2F2", padding=10,
                                      content=ft.Row(spacing=8, controls=[
                                          ft.Icon(ft.Icons.WARNING_AMBER, color=C_RED, size=18),
                                          ft.Text(str(low_count) + " کالا نیاز به تأمین دارد", size=13,
                                                  color=C_RED, weight=ft.FontWeight.BOLD),
                                      ]))
                     )
-                for r in filtered_rows:
+                for r in rows:
                     qty = db.qty(r["name"])
                     low = r["min_qty"] > 0 and qty <= r["min_qty"]
                     color = C_RED if low else (C_ORANGE if qty == 0 else C_GREEN)
@@ -770,7 +753,7 @@ def main(page: ft.Page):
 
                     controls.append(
                         ft.Container(
-                            margin=ft.margin.symmetric(horizontal=12, vertical=5),
+                            margin=10,
                             border_radius=14,
                             bgcolor=C_WHITE,
                             padding=14,
@@ -1583,10 +1566,7 @@ def main(page: ft.Page):
                     active_tab[0] = index
                     refresh_tabs()
                     if index == 0:
-                        try:
-                            render_products()
-                        except Exception as ex:
-                            show_dialog("خطا در داشبورد", str(ex), C_RED)
+                        render_products()
                     elif index == 1:
                         render_enter()
                     elif index == 2:
