@@ -649,22 +649,25 @@ def main(page: ft.Page):
 
             set_body(controls)
 
-        # ========== داشبورد ==========
-        def render_products():
+        # ========== داشبورد (اصلاح‌شده) ==========
+        def render_products(filter_text=""):
             rows = db.all_products()
             low_count = len(db.low_stock())
             total_val = db.total_value()
 
+            if filter_text.strip():
+                fl = filter_text.lower().strip()
+                filtered_rows = [r for r in rows if fl in r["name"].lower()]
+            else:
+                filtered_rows = rows
+
             search_field = ft.TextField(
                 label="جستجوی کالا",
                 border_color=C_BLUE,
-                prefix_icon=ft.Icons.SEARCH,
                 hint_text="نام کالا را تایپ کنید...",
-                on_change=lambda e: _filter_products(e.control.value, rows, low_count, total_val, product_list),
+                value=filter_text,
             )
-
-            product_list = ft.Column(spacing=0)
-            _build_product_list(rows, product_list)
+            search_field.on_change = lambda e: render_products(e.control.value)
 
             controls = [
                 ft.Container(bgcolor=C_BLUE, padding=20, content=ft.Column(spacing=10, controls=[
@@ -709,13 +712,13 @@ def main(page: ft.Page):
                 ft.Container(height=8),
             ]
 
-            if not rows:
+            if not filtered_rows:
                 controls.append(
                     ft.Container(padding=60, content=ft.Column(
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12,
                         controls=[
                             ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=70, color=C_LIGHT),
-                            ft.Text("انبار خالی است", size=18, color=C_GRAY)
+                            ft.Text("انبار خالی است" if not rows else "کالایی با این نام یافت نشد", size=18, color=C_GRAY)
                         ],
                     ))
                 )
@@ -730,109 +733,96 @@ def main(page: ft.Page):
                                                  color=C_RED, weight=ft.FontWeight.BOLD),
                                      ]))
                     )
-                controls.append(product_list)
+                for r in filtered_rows:
+                    qty = db.qty(r["name"])
+                    low = r["min_qty"] > 0 and qty <= r["min_qty"]
+                    color = C_RED if low else (C_ORANGE if qty == 0 else C_GREEN)
 
-            set_body(controls)
+                    def on_edit(e, row=r):
+                        show_product_form(row)
 
-        def _build_product_list(rows, container, filter_text=""):
-            container.controls.clear()
-            filtered = rows
-            if filter_text.strip():
-                fl = filter_text.lower().strip()
-                filtered = [r for r in rows if fl in r["name"].lower()]
+                    def on_del(e, n=r["name"]):
+                        def confirm_del(e2):
+                            dlg.open = False
+                            page.update()
+                            db.delete_product(n)
+                            show_dialog("حذف", n + " حذف شد", C_RED)
+                            render_products()
 
-            for r in filtered:
-                qty = db.qty(r["name"])
-                low = r["min_qty"] > 0 and qty <= r["min_qty"]
-                color = C_RED if low else (C_ORANGE if qty == 0 else C_GREEN)
+                        def cancel_del(e2):
+                            dlg.open = False
+                            page.update()
 
-                def on_edit(e, row=r):
-                    show_product_form(row)
-
-                def on_del(e, n=r["name"]):
-                    def confirm_del(e2):
-                        dlg.open = False
+                        dlg = ft.AlertDialog(
+                            title=ft.Text("حذف کالا", color=C_RED, weight=ft.FontWeight.BOLD),
+                            content=ft.Text("کالای «" + n + "» و تمام تراکنش‌هایش حذف می‌شود. مطمئنید؟"),
+                            actions=[
+                                ft.TextButton("بله، حذف شود", on_click=confirm_del),
+                                ft.TextButton("انصراف", on_click=cancel_del),
+                            ],
+                        )
+                        page.dialog = dlg
+                        dlg.open = True
                         page.update()
-                        db.delete_product(n)
-                        show_dialog("حذف", n + " حذف شد", C_RED)
-                        render_products()
 
-                    def cancel_del(e2):
-                        dlg.open = False
-                        page.update()
+                    def on_tap(e, row=r):
+                        show_product_history(row, render_products)
 
-                    dlg = ft.AlertDialog(
-                        title=ft.Text("حذف کالا", color=C_RED, weight=ft.FontWeight.BOLD),
-                        content=ft.Text("کالای «" + n + "» و تمام تراکنش‌هایش حذف می‌شود. مطمئنید؟"),
-                        actions=[
-                            ft.TextButton("بله، حذف شود", on_click=confirm_del),
-                            ft.TextButton("انصراف", on_click=cancel_del),
-                        ],
-                    )
-                    page.dialog = dlg
-                    dlg.open = True
-                    page.update()
-
-                def on_tap(e, row=r):
-                    show_product_history(row, render_products)
-
-                container.controls.append(
-                    ft.Container(
-                        margin=ft.margin.symmetric(horizontal=12, vertical=5),
-                        border_radius=14,
-                        bgcolor=C_WHITE,
-                        padding=14,
-                        on_click=on_tap,
-                        ink=True,
-                        content=ft.Column(spacing=10, controls=[
-                            ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                                ft.Column(spacing=3, expand=True, controls=[
-                                    ft.Text(r["name"], size=15, weight=ft.FontWeight.BOLD, color=C_DARK),
-                                    ft.Row(spacing=6, controls=[
-                                        ft.Container(border_radius=20, bgcolor=C_LIGHT, padding=6,
-                                                     content=ft.Text(r["category"], size=11, color=C_GRAY))
+                    controls.append(
+                        ft.Container(
+                            margin=ft.margin.symmetric(horizontal=12, vertical=5),
+                            border_radius=14,
+                            bgcolor=C_WHITE,
+                            padding=14,
+                            on_click=on_tap,
+                            ink=True,
+                            content=ft.Column(spacing=10, controls=[
+                                ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
+                                    ft.Column(spacing=3, expand=True, controls=[
+                                        ft.Text(r["name"], size=15, weight=ft.FontWeight.BOLD, color=C_DARK),
+                                        ft.Row(spacing=6, controls=[
+                                            ft.Container(border_radius=20, bgcolor=C_LIGHT, padding=6,
+                                                         content=ft.Text(r["category"], size=11, color=C_GRAY))
+                                        ]),
+                                    ]),
+                                    ft.Row(spacing=0, controls=[
+                                        ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=C_BLUE,
+                                                      icon_size=18, on_click=on_edit),
+                                        ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color=C_RED,
+                                                      icon_size=18, on_click=on_del),
                                     ]),
                                 ]),
-                                ft.Row(spacing=0, controls=[
-                                    ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=C_BLUE,
-                                                  icon_size=18, on_click=on_edit),
-                                    ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color=C_RED,
-                                                  icon_size=18, on_click=on_del),
+                                ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
+                                    ft.Container(border_radius=10, bgcolor=color + "15", padding=10,
+                                                 content=ft.Column(spacing=2, controls=[
+                                                     ft.Text("موجودی", size=10, color=C_GRAY),
+                                                     ft.Text(fmt(qty) + " " + r["unit"], size=16,
+                                                             weight=ft.FontWeight.BOLD, color=color),
+                                                 ])),
+                                    ft.Column(spacing=2,
+                                              horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                              controls=[
+                                                  ft.Text("حداقل موجودی", size=10, color=C_GRAY),
+                                                  ft.Text(fmt(r["min_qty"]) + " " + r["unit"], size=13,
+                                                          color=C_DARK),
+                                              ]),
+                                    ft.Column(spacing=2,
+                                              horizontal_alignment=ft.CrossAxisAlignment.END,
+                                              controls=[
+                                                  ft.Text("واحد", size=10, color=C_GRAY),
+                                                  ft.Text(r["unit"], size=13, color=C_DARK),
+                                              ]),
                                 ]),
-                            ]),
-                            ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                                ft.Container(border_radius=10, bgcolor=color + "15", padding=10,
-                                             content=ft.Column(spacing=2, controls=[
-                                                 ft.Text("موجودی", size=10, color=C_GRAY),
-                                                 ft.Text(fmt(qty) + " " + r["unit"], size=16,
-                                                         weight=ft.FontWeight.BOLD, color=color),
+                                ft.Container(visible=low, border_radius=8, bgcolor="#FEF2F2", padding=8,
+                                             content=ft.Row(spacing=6, controls=[
+                                                 ft.Icon(ft.Icons.WARNING_AMBER, color=C_RED, size=16),
+                                                 ft.Text("موجودی زیر حداقل!", size=12, color=C_RED),
                                              ])),
-                                ft.Column(spacing=2,
-                                          horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                          controls=[
-                                              ft.Text("حداقل موجودی", size=10, color=C_GRAY),
-                                              ft.Text(fmt(r["min_qty"]) + " " + r["unit"], size=13,
-                                                      color=C_DARK),
-                                          ]),
-                                ft.Column(spacing=2,
-                                          horizontal_alignment=ft.CrossAxisAlignment.END,
-                                          controls=[
-                                              ft.Text("واحد", size=10, color=C_GRAY),
-                                              ft.Text(r["unit"], size=13, color=C_DARK),
-                                          ]),
-                            ]),
-                            ft.Container(visible=low, border_radius=8, bgcolor="#FEF2F2", padding=8,
-                                         content=ft.Row(spacing=6, controls=[
-                                             ft.Icon(ft.Icons.WARNING_AMBER, color=C_RED, size=16),
-                                             ft.Text("موجودی زیر حداقل!", size=12, color=C_RED),
-                                         ])),
-                        ])
+                            ])
+                        )
                     )
-                )
 
-        def _filter_products(filter_text, rows, low_count, total_val, container):
-            _build_product_list(rows, container, filter_text)
-            container.update()
+            set_body(controls)
 
         # ========== فرم کالا ==========
         def show_product_form(row=None):
@@ -1593,7 +1583,10 @@ def main(page: ft.Page):
                     active_tab[0] = index
                     refresh_tabs()
                     if index == 0:
-                        render_products()
+                        try:
+                            render_products()
+                        except Exception as ex:
+                            show_dialog("خطا در داشبورد", str(ex), C_RED)
                     elif index == 1:
                         render_enter()
                     elif index == 2:
