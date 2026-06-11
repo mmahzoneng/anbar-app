@@ -725,28 +725,9 @@ def main(page: ft.Page):
                         show_product_form(row)
 
                     def on_del(e, n=r["name"]):
-                        def confirm_del(e2):
-                            dlg.open = False
-                            page.update()
-                            db.delete_product(n)
-                            show_dialog("حذف", n + " حذف شد", C_RED)
-                            render_products()
-
-                        def cancel_del(e2):
-                            dlg.open = False
-                            page.update()
-
-                        dlg = ft.AlertDialog(
-                            title=ft.Text("حذف کالا", color=C_RED, weight=ft.FontWeight.BOLD),
-                            content=ft.Text("کالای «" + n + "» و تمام تراکنش‌هایش حذف می‌شود. مطمئنید؟"),
-                            actions=[
-                                ft.TextButton("بله، حذف شود", on_click=confirm_del),
-                                ft.TextButton("انصراف", on_click=cancel_del),
-                            ],
-                        )
-                        page.dialog = dlg
-                        dlg.open = True
-                        page.update()
+                        db.delete_product(n)
+                        show_dialog("حذف", n + " حذف شد", C_RED)
+                        render_products()
 
                     def on_tap(e, row=r):
                         show_product_history(row, render_products)
@@ -1086,7 +1067,7 @@ def main(page: ft.Page):
                 ])),
             ])
 
-        # ========== ویرایش تراکنش ==========
+        # ========== ویرایش تراکنش (حذف مستقیم و فعال) ==========
         def show_edit_txn(txn_id, back_fn):
             row = db.get_txn(txn_id)
             if not row:
@@ -1132,30 +1113,25 @@ def main(page: ft.Page):
                     show_dialog("خطا", "موجودی کافی نیست!", C_RED)
                     return
                 show_dialog("موفق", "ویرایش شد ✓", C_GREEN)
-                back_fn()
+                if back_fn:
+                    back_fn()
+                else:
+                    render_reports()
 
             def delete(e):
-                def confirm_del(e2):
-                    dlg.open = False
-                    page.update()
-                    db.delete_txn(txn_id)
-                    show_dialog("حذف", "تراکنش حذف شد", C_RED)
-                    back_fn()
-
-                def cancel_del(e2):
-                    dlg.open = False
-                    page.update()
-
-                dlg = ft.AlertDialog(
-                    title=ft.Text("حذف تراکنش", color=C_RED, weight=ft.FontWeight.BOLD),
-                    content=ft.Text("این تراکنش حذف می‌شود. مطمئنید؟"),
-                    actions=[
-                        ft.TextButton("بله، حذف شود", on_click=confirm_del),
-                        ft.TextButton("انصراف", on_click=cancel_del),
-                    ],
+                # حذف مستقیم تراکنش
+                db.delete_txn(txn_id)
+                # نمایش پیغام با SnackBar
+                page.snack_bar = ft.SnackBar(
+                    ft.Text("✅ تراکنش با موفقیت حذف شد", color="white"),
+                    bgcolor=C_RED
                 )
-                page.dialog = dlg
-                dlg.open = True
+                page.snack_bar.open = True
+                # بعد از حذف، صفحهٔ قبلی را به‌روز کن
+                if back_fn:
+                    back_fn()
+                else:
+                    render_reports()
                 page.update()
 
             set_body([
@@ -1279,7 +1255,7 @@ def main(page: ft.Page):
 
                             def make_edit(t):
                                 def fn(e):
-                                    show_edit_txn(t, render_reports)
+                                    show_edit_txn(t, None)
                                 return fn
 
                             info = []
@@ -1557,7 +1533,7 @@ def main(page: ft.Page):
                 ft.Container(padding=16, content=ft.Column(spacing=10, controls=items)),
             ])
 
-        # ========== نوار تب ==========
+        # ========== نوار تب (فقط padding پایین ۱۶) ==========
         tab_bar_row = ft.Row(spacing=0)
 
         def refresh_tabs():
@@ -1593,7 +1569,11 @@ def main(page: ft.Page):
 
         page.add(ft.Column(expand=True, spacing=0, controls=[
             ft.Container(expand=True, content=body),
-            ft.Container(bgcolor=C_WHITE, padding=4, content=tab_bar_row),
+            ft.Container(
+                bgcolor=C_WHITE,
+                padding=ft.padding.only(left=4, top=4, right=4, bottom=16),
+                content=tab_bar_row
+            ),
         ]))
 
         refresh_tabs()
